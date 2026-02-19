@@ -36,6 +36,7 @@ from frigate.const import (
     MAX_SEGMENTS_IN_CACHE,
     RECORD_DIR,
 )
+from frigate.util.storage_tiers import get_hot_tier_path
 from frigate.models import Recordings, ReviewSegment
 from frigate.review.types import SeverityEnum
 from frigate.util.services import get_video_properties
@@ -519,8 +520,9 @@ class RecordingMaintainer(threading.Thread):
             return
 
         # directory will be in utc due to start_time being in utc
+        hot_path = get_hot_tier_path(self.config)
         directory = os.path.join(
-            RECORD_DIR,
+            hot_path,
             start_time.strftime("%Y-%m-%d/%H"),
             camera,
         )

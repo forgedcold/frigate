@@ -71,6 +71,7 @@ from frigate.review.review import ReviewProcess
 from frigate.stats.emitter import StatsEmitter
 from frigate.stats.util import stats_init
 from frigate.storage import StorageMaintainer
+from frigate.tier_migrator import StorageTierMigrator
 from frigate.timeline import TimelineProcessor
 from frigate.track.object_processing import TrackedObjectProcessor
 from frigate.util.builtin import empty_and_close_queue
@@ -131,6 +132,10 @@ class FrigateApp:
 
         if self.config.semantic_search.enabled:
             dirs.append(TRIGGER_DIR)
+
+        for tier in self.config.storage.tiers:
+            if tier.path not in dirs:
+                dirs.append(tier.path)
 
         for d in dirs:
             if not os.path.exists(d) and not os.path.islink(d):
@@ -458,6 +463,13 @@ class FrigateApp:
         self.storage_maintainer = StorageMaintainer(self.config, self.stop_event)
         self.storage_maintainer.start()
 
+    def start_tier_migrator(self) -> None:
+        if self.config.storage.tiers and len(self.config.storage.tiers) > 1:
+            self.tier_migrator = StorageTierMigrator(self.config, self.stop_event)
+            self.tier_migrator.start()
+        else:
+            self.tier_migrator = None
+
     def start_stats_emitter(self) -> None:
         self.stats_emitter = StatsEmitter(
             self.config,
@@ -551,6 +563,7 @@ class FrigateApp:
         self.start_camera_processor()
         self.start_audio_processor()
         self.start_storage_maintainer()
+        self.start_tier_migrator()
         self.start_stats_emitter()
         self.start_timeline_processor()
         self.start_event_processor()
@@ -635,6 +648,8 @@ class FrigateApp:
 
         self.event_cleanup.join()
         self.record_cleanup.join()
+        if self.tier_migrator:
+            self.tier_migrator.join()
         self.stats_emitter.join()
         self.frigate_watchdog.join()
         self.db.stop()

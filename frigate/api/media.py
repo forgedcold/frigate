@@ -50,6 +50,7 @@ from frigate.models import Event, Previews, Recordings, Regions, ReviewSegment
 from frigate.track.object_processing import TrackedObjectProcessor
 from frigate.util.file import get_event_thumbnail_bytes
 from frigate.util.image import get_image_from_recording
+from frigate.util.storage_tiers import get_hot_tier_path
 from frigate.util.time import get_dst_transitions
 
 logger = logging.getLogger(__name__)
@@ -399,14 +400,15 @@ async def submit_recording_snapshot_to_plus(
 
 @router.get("/recordings/storage", dependencies=[Depends(allow_any_authenticated())])
 def get_recordings_storage_usage(request: Request):
+    hot_path = get_hot_tier_path(request.app.frigate_config)
     recording_stats = request.app.stats_emitter.get_latest_stats()["service"][
         "storage"
-    ][RECORD_DIR]
+    ].get(hot_path, {})
 
     if not recording_stats:
         return JSONResponse({})
 
-    total_mb = recording_stats["total"]
+    total_mb = recording_stats.get("total", 0)
 
     camera_usages: dict[str, dict] = (
         request.app.storage_maintainer.calculate_camera_usages()

@@ -15,6 +15,7 @@ from frigate.const import CACHE_DIR, CLIPS_DIR, MAX_WAL_SIZE, RECORD_DIR
 from frigate.models import Previews, Recordings, ReviewSegment, UserReviewStatus
 from frigate.record.util import remove_empty_directories, sync_recordings
 from frigate.util.builtin import clear_and_unlink
+from frigate.util.storage_tiers import get_all_recording_dirs
 from frigate.util.time import get_tomorrow_at_time
 
 logger = logging.getLogger(__name__)
@@ -351,8 +352,10 @@ class RecordingCleanup(threading.Thread):
 
     def run(self) -> None:
         # on startup sync recordings with disk if enabled
+        recording_dirs = get_all_recording_dirs(self.config)
+
         if self.config.record.sync_recordings:
-            sync_recordings(limited=False)
+            sync_recordings(limited=False, recording_dirs=recording_dirs)
             next_sync = get_tomorrow_at_time(3)
 
         # Expire tmp clips every minute, recordings and clean directories every hour.
@@ -368,11 +371,12 @@ class RecordingCleanup(threading.Thread):
                 and datetime.datetime.now().astimezone(datetime.timezone.utc)
                 > next_sync
             ):
-                sync_recordings(limited=True)
+                sync_recordings(limited=True, recording_dirs=recording_dirs)
                 next_sync = get_tomorrow_at_time(3)
 
             if counter == 0:
                 self.clean_tmp_clips()
                 self.expire_recordings()
-                remove_empty_directories(RECORD_DIR)
+                for recording_dir in recording_dirs:
+                    remove_empty_directories(recording_dir)
                 self.truncate_wal()
