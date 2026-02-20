@@ -11,6 +11,7 @@ from frigate.config import FrigateConfig
 from frigate.const import RECORD_DIR
 from frigate.models import Event, Recordings
 from frigate.util.builtin import clear_and_unlink
+from frigate.util.storage_tiers import get_hot_tier_path
 
 logger = logging.getLogger(__name__)
 bandwidth_equation = Recordings.segment_size / (
@@ -38,7 +39,11 @@ class StorageMaintainer(threading.Thread):
                 self.camera_storage_stats[camera] = {
                     "needs_refresh": (
                         Recordings.select(fn.COUNT("*"))
-                        .where(Recordings.camera == camera, Recordings.segment_size > 0)
+                        .where(
+                            Recordings.camera == camera,
+                            Recordings.segment_size > 0,
+                            Recordings.quality == "full",
+                        )
                         .scalar()
                         < 50
                     )
@@ -49,7 +54,11 @@ class StorageMaintainer(threading.Thread):
                     # Subquery to get last 100 segments, then average their bandwidth
                     last_100 = (
                         Recordings.select(bandwidth_equation.alias("bw"))
-                        .where(Recordings.camera == camera, Recordings.segment_size > 0)
+                        .where(
+                            Recordings.camera == camera,
+                            Recordings.segment_size > 0,
+                            Recordings.quality == "full",
+                        )
                         .order_by(Recordings.start_time.desc())
                         .limit(100)
                         .alias("recent")
@@ -102,7 +111,8 @@ class StorageMaintainer(threading.Thread):
         hourly_bandwidth = sum(
             [b["bandwidth"] for b in self.camera_storage_stats.values()]
         )
-        remaining_storage = round(shutil.disk_usage(RECORD_DIR).free / pow(2, 20), 1)
+        hot_path = get_hot_tier_path(self.config)
+        remaining_storage = round(shutil.disk_usage(hot_path).free / pow(2, 20), 1)
         logger.debug(
             f"Storage cleanup check: {hourly_bandwidth} hourly with remaining storage: {remaining_storage}."
         )
@@ -125,6 +135,7 @@ class StorageMaintainer(threading.Thread):
                 Recordings.segment_size,
                 Recordings.path,
             )
+            .where(Recordings.quality == "full")
             .order_by(Recordings.start_time.asc())
             .namedtuples()
             .iterator()
@@ -199,6 +210,7 @@ class StorageMaintainer(threading.Thread):
                     Recordings.path,
                     Recordings.segment_size,
                 )
+                .where(Recordings.quality == "full")
                 .order_by(Recordings.start_time.asc())
                 .namedtuples()
                 .iterator()

@@ -36,6 +36,7 @@ from frigate.const import (
     MAX_SEGMENTS_IN_CACHE,
     RECORD_DIR,
 )
+from frigate.util.storage_tiers import get_hot_tier_path
 from frigate.models import Recordings, ReviewSegment
 from frigate.review.types import SeverityEnum
 from frigate.util.services import get_video_properties
@@ -121,6 +122,10 @@ class RecordingMaintainer(threading.Thread):
                     self.unexpected_cache_files_logged = True
                 continue
 
+            # skip playback segments for newest-cache tracking
+            if "~playback" in camera:
+                continue
+
             start_time = datetime.datetime.strptime(
                 date, CACHE_SEGMENT_FORMAT
             ).astimezone(datetime.timezone.utc)
@@ -164,6 +169,7 @@ class RecordingMaintainer(threading.Thread):
                 continue
 
         # group recordings by camera (skip in-use for validation/moving)
+        # playback segments are stripped of ~playback and grouped with the camera
         grouped_recordings: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
         for cache in cache_files:
             # Skip files currently in use
@@ -180,6 +186,11 @@ class RecordingMaintainer(threading.Thread):
                     self.unexpected_cache_files_logged = True
                 continue
 
+            # detect and strip playback marker
+            is_playback = "~playback" in camera
+            if is_playback:
+                camera = camera.replace("~playback", "")
+
             # important that start_time is utc because recordings are stored and compared in utc
             start_time = datetime.datetime.strptime(
                 date, CACHE_SEGMENT_FORMAT
@@ -189,6 +200,7 @@ class RecordingMaintainer(threading.Thread):
                 {
                     "cache_path": cache_path,
                     "start_time": start_time,
+                    "is_playback": is_playback,
                 }
             )
 
@@ -199,6 +211,9 @@ class RecordingMaintainer(threading.Thread):
             grouped_recordings[camera] = sorted(
                 grouped_recordings[camera], key=lambda s: s["start_time"]
             )
+
+            # only count non-playback segments for cache pruning
+            non_playback = [r for r in grouped_recordings[camera] if not r.get("is_playback", False)]
 
             camera_info = self.object_recordings_info[camera]
             most_recently_processed_frame_time = (
@@ -212,7 +227,7 @@ class RecordingMaintainer(threading.Thread):
                             r["start_time"].timestamp()
                             < most_recently_processed_frame_time
                         ),
-                        grouped_recordings[camera],
+                        non_playback,
                     )
                 )
             )
@@ -222,35 +237,39 @@ class RecordingMaintainer(threading.Thread):
                 logger.warning(
                     f"Unable to keep up with recording segments in cache for {camera}. Keeping the {keep_count} most recent segments out of {processed_segment_count} and discarding the rest..."
                 )
-                to_remove = grouped_recordings[camera][:-keep_count]
+                # only prune non-playback segments
+                to_remove = non_playback[:-keep_count]
                 for rec in to_remove:
                     cache_path = rec["cache_path"]
                     Path(cache_path).unlink(missing_ok=True)
                     self.end_time_cache.pop(cache_path, None)
-                grouped_recordings[camera] = grouped_recordings[camera][-keep_count:]
+                    grouped_recordings[camera].remove(rec)
 
             # see if detection has failed and unprocessed segments need to be deleted
-            unprocessed_segment_count = (
-                len(grouped_recordings[camera]) - processed_segment_count
-            )
+            unprocessed_segment_count = len(non_playback) - processed_segment_count
             if unprocessed_segment_count > keep_count:
                 logger.warning(
                     f"Too many unprocessed recording segments in cache for {camera}. This likely indicates an issue with the detect stream, keeping the {keep_count} most recent segments out of {unprocessed_segment_count} and discarding the rest..."
                 )
-                to_remove = grouped_recordings[camera][:-keep_count]
+                to_remove = non_playback[:-keep_count]
                 for rec in to_remove:
                     cache_path = rec["cache_path"]
                     Path(cache_path).unlink(missing_ok=True)
                     self.end_time_cache.pop(cache_path, None)
-                grouped_recordings[camera] = grouped_recordings[camera][-keep_count:]
+                    grouped_recordings[camera].remove(rec)
 
         tasks = []
         for camera, recordings in grouped_recordings.items():
             # clear out all the object recording info for old frames
+            # use only non-playback recordings for timestamp comparison
+            non_playback = [r for r in recordings if not r.get("is_playback", False)]
+            oldest_start = (non_playback[0]["start_time"].timestamp() if non_playback else
+                           recordings[0]["start_time"].timestamp())
+
             while (
                 len(self.object_recordings_info[camera]) > 0
                 and self.object_recordings_info[camera][0][0]
-                < recordings[0]["start_time"].timestamp()
+                < oldest_start
             ):
                 self.object_recordings_info[camera].pop(0)
 
@@ -258,7 +277,7 @@ class RecordingMaintainer(threading.Thread):
             while (
                 len(self.audio_recordings_info[camera]) > 0
                 and self.audio_recordings_info[camera][0][0]
-                < recordings[0]["start_time"].timestamp()
+                < oldest_start
             ):
                 self.audio_recordings_info[camera].pop(0)
 
@@ -276,7 +295,7 @@ class RecordingMaintainer(threading.Thread):
                     (ReviewSegment.end_time == None)
                     | (
                         ReviewSegment.end_time
-                        >= recordings[0]["start_time"].timestamp()
+                        >= oldest_start
                     ),
                 )
                 .order_by(ReviewSegment.start_time)
@@ -287,16 +306,17 @@ class RecordingMaintainer(threading.Thread):
             )
 
             # publish most recently available recording time and None if disabled
-            self.recordings_publisher.publish(
-                (
-                    camera,
-                    recordings[0]["start_time"].timestamp()
-                    if self.config.cameras[camera].record.enabled
-                    else None,
-                    None,
-                ),
-                RecordingsDataTypeEnum.saved.value,
-            )
+            if non_playback:
+                self.recordings_publisher.publish(
+                    (
+                        camera,
+                        non_playback[0]["start_time"].timestamp()
+                        if self.config.cameras[camera].record.enabled
+                        else None,
+                        None,
+                    ),
+                    RecordingsDataTypeEnum.saved.value,
+                )
 
         recordings_to_insert: list[Optional[Recordings]] = await asyncio.gather(*tasks)
 
@@ -315,6 +335,7 @@ class RecordingMaintainer(threading.Thread):
     ) -> Optional[Recordings]:
         cache_path: str = recording["cache_path"]
         start_time: datetime.datetime = recording["start_time"]
+        is_playback: bool = recording.get("is_playback", False)
         record_config = self.config.cameras[camera].record
 
         # Just delete files if recordings are turned off
@@ -336,10 +357,11 @@ class RecordingMaintainer(threading.Thread):
                 logger.warning(
                     f"Invalid or missing video stream in segment {cache_path}. Discarding."
                 )
-                self.recordings_publisher.publish(
-                    (camera, start_time.timestamp(), cache_path),
-                    RecordingsDataTypeEnum.invalid.value,
-                )
+                if not is_playback:
+                    self.recordings_publisher.publish(
+                        (camera, start_time.timestamp(), cache_path),
+                        RecordingsDataTypeEnum.invalid.value,
+                    )
                 self.drop_segment(cache_path)
                 return None
 
@@ -354,17 +376,26 @@ class RecordingMaintainer(threading.Thread):
                     logger.warning(f"Failed to probe corrupt segment {cache_path}")
 
                 logger.warning(f"Discarding a corrupt recording segment: {cache_path}")
-                self.recordings_publisher.publish(
-                    (camera, start_time.timestamp(), cache_path),
-                    RecordingsDataTypeEnum.invalid.value,
-                )
+                if not is_playback:
+                    self.recordings_publisher.publish(
+                        (camera, start_time.timestamp(), cache_path),
+                        RecordingsDataTypeEnum.invalid.value,
+                    )
                 self.drop_segment(cache_path)
                 return None
 
             # this segment has a valid duration and has video data, so publish an update
-            self.recordings_publisher.publish(
-                (camera, start_time.timestamp(), cache_path),
-                RecordingsDataTypeEnum.valid.value,
+            if not is_playback:
+                self.recordings_publisher.publish(
+                    (camera, start_time.timestamp(), cache_path),
+                    RecordingsDataTypeEnum.valid.value,
+                )
+
+        # playback segments always follow the main recording -- skip retention logic
+        if is_playback:
+            return await self.move_segment(
+                camera, start_time, end_time, duration, cache_path,
+                RetainModeEnum.all, is_playback=True,
             )
 
         record_config = self.config.cameras[camera].record
@@ -510,20 +541,31 @@ class RecordingMaintainer(threading.Thread):
         duration: float,
         cache_path: str,
         store_mode: RetainModeEnum,
+        is_playback: bool = False,
     ) -> Optional[Recordings]:
-        segment_info = self.segment_stats(camera, start_time, end_time)
+        if not is_playback:
+            segment_info = self.segment_stats(camera, start_time, end_time)
 
-        # check if the segment shouldn't be stored
-        if segment_info.should_discard_segment(store_mode):
-            self.drop_segment(cache_path)
-            return
+            # check if the segment shouldn't be stored
+            if segment_info.should_discard_segment(store_mode):
+                self.drop_segment(cache_path)
+                return
 
         # directory will be in utc due to start_time being in utc
-        directory = os.path.join(
-            RECORD_DIR,
-            start_time.strftime("%Y-%m-%d/%H"),
-            camera,
-        )
+        hot_path = get_hot_tier_path(self.config)
+        if is_playback:
+            directory = os.path.join(
+                hot_path,
+                "proxy",
+                start_time.strftime("%Y-%m-%d/%H"),
+                camera,
+            )
+        else:
+            directory = os.path.join(
+                hot_path,
+                start_time.strftime("%Y-%m-%d/%H"),
+                camera,
+            )
 
         if not os.path.exists(directory):
             os.makedirs(directory)
@@ -584,12 +626,13 @@ class RecordingMaintainer(threading.Thread):
                     Recordings.start_time.name: start_time.timestamp(),
                     Recordings.end_time.name: end_time.timestamp(),
                     Recordings.duration.name: duration,
-                    Recordings.motion.name: segment_info.motion_count,
+                    Recordings.motion.name: 0 if is_playback else segment_info.motion_count,
                     # TODO: update this to store list of active objects at some point
-                    Recordings.objects.name: segment_info.active_object_count,
-                    Recordings.regions.name: segment_info.region_count,
-                    Recordings.dBFS.name: segment_info.average_dBFS,
+                    Recordings.objects.name: 0 if is_playback else segment_info.active_object_count,
+                    Recordings.regions.name: 0 if is_playback else segment_info.region_count,
+                    Recordings.dBFS.name: 0 if is_playback else segment_info.average_dBFS,
                     Recordings.segment_size.name: segment_size,
+                    Recordings.quality.name: "proxy" if is_playback else "full",
                 }
         except Exception as e:
             logger.error(f"Unable to store recording segment {cache_path}")

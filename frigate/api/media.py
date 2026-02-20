@@ -50,6 +50,7 @@ from frigate.models import Event, Previews, Recordings, Regions, ReviewSegment
 from frigate.track.object_processing import TrackedObjectProcessor
 from frigate.util.file import get_event_thumbnail_bytes
 from frigate.util.image import get_image_from_recording
+from frigate.util.storage_tiers import get_hot_tier_path
 from frigate.util.time import get_dst_transitions
 
 logger = logging.getLogger(__name__)
@@ -272,6 +273,7 @@ async def get_snapshot_from_recording(
                 )
             )
             .where(Recordings.camera == camera_name)
+            .where(Recordings.quality == "full")
             .order_by(Recordings.start_time.desc())
             .limit(1)
             .get()
@@ -293,6 +295,7 @@ async def get_snapshot_from_recording(
                     )
                 )
                 .where(Recordings.camera == camera_name)
+                .where(Recordings.quality == "full")
                 .order_by(Recordings.start_time.desc())
                 .limit(1)
                 .get()
@@ -356,6 +359,7 @@ async def submit_recording_snapshot_to_plus(
             )
         )
         .where(Recordings.camera == camera_name)
+        .where(Recordings.quality == "full")
         .order_by(Recordings.start_time.desc())
         .limit(1)
     )
@@ -399,14 +403,15 @@ async def submit_recording_snapshot_to_plus(
 
 @router.get("/recordings/storage", dependencies=[Depends(allow_any_authenticated())])
 def get_recordings_storage_usage(request: Request):
+    hot_path = get_hot_tier_path(request.app.frigate_config)
     recording_stats = request.app.stats_emitter.get_latest_stats()["service"][
         "storage"
-    ][RECORD_DIR]
+    ].get(hot_path, {})
 
     if not recording_stats:
         return JSONResponse({})
 
-    total_mb = recording_stats["total"]
+    total_mb = recording_stats.get("total", 0)
 
     camera_usages: dict[str, dict] = (
         request.app.storage_maintainer.calculate_camera_usages()
@@ -445,6 +450,7 @@ def all_recordings_summary(
             fn.MAX(Recordings.start_time).alias("max_time"),
         )
         .where(Recordings.camera << camera_list)
+        .where(Recordings.quality == "full")
         .dicts()
         .get()
     )
@@ -481,6 +487,7 @@ def all_recordings_summary(
                 (Recordings.camera << camera_list)
                 & (Recordings.end_time >= period_start)
                 & (Recordings.start_time <= period_end)
+                & (Recordings.quality == "full")
             )
             .group_by(
                 fn.strftime(
@@ -515,6 +522,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
             fn.MAX(Recordings.start_time).alias("max_time"),
         )
         .where(Recordings.camera == camera_name)
+        .where(Recordings.quality == "full")
         .dicts()
         .get()
     )
@@ -554,6 +562,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
                 (Recordings.camera == camera_name)
                 & (Recordings.end_time >= period_start)
                 & (Recordings.start_time <= period_end)
+                & (Recordings.quality == "full")
             )
             .group_by((Recordings.start_time + period_offset).cast("int") / 3600)
             .order_by(Recordings.start_time.desc())
@@ -630,6 +639,7 @@ async def recordings(
             Recordings.camera == camera_name,
             Recordings.end_time >= after,
             Recordings.start_time <= before,
+            Recordings.quality == "full",
         )
         .order_by(Recordings.start_time)
         .dicts()
@@ -667,7 +677,10 @@ async def no_recordings(
     )
     scale = params.scale
 
-    clauses = [(Recordings.end_time >= after) & (Recordings.start_time <= before)]
+    clauses = [
+        (Recordings.end_time >= after) & (Recordings.start_time <= before),
+        Recordings.quality == "full",
+    ]
     if cameras != "all":
         camera_list = cameras.split(",")
         clauses.append((Recordings.camera << camera_list))
@@ -767,6 +780,7 @@ async def recording_clip(
             | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
         )
         .where(Recordings.camera == camera_name)
+        .where(Recordings.quality == "full")
         .order_by(Recordings.start_time.asc())
     )
 
@@ -842,13 +856,15 @@ async def vod_ts(
     start_ts: float,
     end_ts: float,
     force_discontinuity: bool = False,
+    quality: str = "full",
 ):
     logger.debug(
-        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s",
+        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s quality=%s",
         camera_name,
         start_ts,
         end_ts,
         force_discontinuity,
+        quality,
     )
     recordings = (
         Recordings.select(
@@ -863,6 +879,7 @@ async def vod_ts(
             | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
         )
         .where(Recordings.camera == camera_name)
+        .where(Recordings.quality == quality)
         .order_by(Recordings.start_time.asc())
         .iterator()
     )
@@ -1033,6 +1050,22 @@ async def vod_clip(
     end_ts: float,
 ):
     return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True)
+
+
+@router.get(
+    "/vod-proxy/{camera_name}/start/{start_ts}/end/{end_ts}",
+    dependencies=[Depends(require_camera_access)],
+    description="Returns an HLS playlist for proxy (mobile-quality) recordings. Same as vod_ts but hardcoded to quality=proxy.",
+)
+async def vod_proxy_ts(
+    camera_name: str,
+    start_ts: float,
+    end_ts: float,
+    force_discontinuity: bool = False,
+):
+    return await vod_ts(
+        camera_name, start_ts, end_ts, force_discontinuity, quality="proxy"
+    )
 
 
 @router.get(

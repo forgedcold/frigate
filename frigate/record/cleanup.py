@@ -15,6 +15,7 @@ from frigate.const import CACHE_DIR, CLIPS_DIR, MAX_WAL_SIZE, RECORD_DIR
 from frigate.models import Previews, Recordings, ReviewSegment, UserReviewStatus
 from frigate.record.util import remove_empty_directories, sync_recordings
 from frigate.util.builtin import clear_and_unlink
+from frigate.util.storage_tiers import get_all_recording_dirs
 from frigate.util.time import get_tomorrow_at_time
 
 logger = logging.getLogger(__name__)
@@ -110,7 +111,7 @@ class RecordingCleanup(threading.Thread):
         """Delete recordings for existing camera based on retention config."""
         # Get the timestamp for cutoff of retained days
 
-        # Get recordings to check for expiration
+        # Get recordings to check for expiration (only full quality -- proxy follows)
         recordings: Recordings = (
             Recordings.select(
                 Recordings.id,
@@ -123,6 +124,7 @@ class RecordingCleanup(threading.Thread):
             )
             .where(
                 (Recordings.camera == config.name)
+                & (Recordings.quality == "full")
                 & (
                     (
                         (Recordings.end_time < continuous_expire_date)
@@ -205,6 +207,30 @@ class RecordingCleanup(threading.Thread):
             Recordings.delete().where(
                 Recordings.id << deleted_recordings_list[i : i + max_deletes]
             ).execute()
+
+        # also delete proxy recordings that have aged past the retention window
+        if deleted_recordings:
+            proxy_recordings: Recordings = (
+                Recordings.select(Recordings.id, Recordings.path)
+                .where(
+                    (Recordings.camera == config.name)
+                    & (Recordings.quality == "proxy")
+                    & (Recordings.end_time < motion_expire_date)
+                )
+                .namedtuples()
+                .iterator()
+            )
+            deleted_proxy = set()
+            for proxy in proxy_recordings:
+                Path(proxy.path).unlink(missing_ok=True)
+                deleted_proxy.add(proxy.id)
+            if deleted_proxy:
+                logger.debug(f"Expiring {len(deleted_proxy)} proxy recordings")
+                deleted_proxy_list = list(deleted_proxy)
+                for i in range(0, len(deleted_proxy_list), max_deletes):
+                    Recordings.delete().where(
+                        Recordings.id << deleted_proxy_list[i : i + max_deletes]
+                    ).execute()
 
         previews: list[Previews] = (
             Previews.select(
@@ -351,8 +377,10 @@ class RecordingCleanup(threading.Thread):
 
     def run(self) -> None:
         # on startup sync recordings with disk if enabled
+        recording_dirs = get_all_recording_dirs(self.config)
+
         if self.config.record.sync_recordings:
-            sync_recordings(limited=False)
+            sync_recordings(limited=False, recording_dirs=recording_dirs)
             next_sync = get_tomorrow_at_time(3)
 
         # Expire tmp clips every minute, recordings and clean directories every hour.
@@ -368,11 +396,12 @@ class RecordingCleanup(threading.Thread):
                 and datetime.datetime.now().astimezone(datetime.timezone.utc)
                 > next_sync
             ):
-                sync_recordings(limited=True)
+                sync_recordings(limited=True, recording_dirs=recording_dirs)
                 next_sync = get_tomorrow_at_time(3)
 
             if counter == 0:
                 self.clean_tmp_clips()
                 self.expire_recordings()
-                remove_empty_directories(RECORD_DIR)
+                for recording_dir in recording_dirs:
+                    remove_empty_directories(recording_dir)
                 self.truncate_wal()

@@ -364,7 +364,9 @@ class CameraWatchdog(threading.Thread):
             for p in self.ffmpeg_other_processes:
                 poll = p["process"].poll()
 
-                if self.config.record.enabled and "record" in p["roles"]:
+                if self.config.record.enabled and (
+                    "record" in p["roles"] or "playback" in p["roles"]
+                ):
                     now_utc = datetime.now().astimezone(timezone.utc)
 
                     # Check if we're within the grace period after enabling recording

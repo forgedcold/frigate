@@ -74,6 +74,11 @@ import { supportedLanguageKeys } from "@/lib/const";
 
 import { useDocDomain } from "@/hooks/use-doc-domain";
 import { MdCategory } from "react-icons/md";
+import { LuMonitor } from "react-icons/lu";
+import {
+  PlaybackQuality,
+  usePlaybackQuality,
+} from "@/hooks/use-playback-quality";
 
 type GeneralSettingsProps = {
   className?: string;
@@ -109,8 +114,19 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
 
   const { language, setLanguage } = useLanguage();
   const { theme, colorScheme, setTheme, setColorScheme } = useTheme();
+  const [playbackQuality, setPlaybackQuality] = usePlaybackQuality();
   const [restartDialogOpen, setRestartDialogOpen] = useState(false);
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+
+  // check if any camera has playback role
+  const hasAnyPlaybackRole = useMemo(() => {
+    if (!config) return false;
+    return Object.values(config.cameras).some((cam) =>
+      cam.ffmpeg.inputs.some((input: { roles: string[] }) =>
+        input.roles.includes("playback"),
+      ),
+    );
+  }, [config]);
   const { send: sendRestart } = useRestart();
 
   const isAdmin = useIsAdmin();
@@ -547,6 +563,66 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                 </SubItemContent>
               </Portal>
             </SubItem>
+            {hasAnyPlaybackRole && (
+              <SubItem>
+                <SubItemTrigger
+                  className={
+                    isDesktop
+                      ? "cursor-pointer"
+                      : "flex items-center p-2 text-sm"
+                  }
+                >
+                  <LuMonitor className="mr-2 size-4" />
+                  <span>Playback Quality</span>
+                </SubItemTrigger>
+                <Portal>
+                  <SubItemContent
+                    className={
+                      isDesktop ? "" : "w-[92%] rounded-lg md:rounded-2xl"
+                    }
+                  >
+                    {!isDesktop && (
+                      <>
+                        <DialogTitle className="sr-only">
+                          Playback Quality
+                        </DialogTitle>
+                        <DialogDescription className="sr-only">
+                          Playback Quality
+                        </DialogDescription>
+                      </>
+                    )}
+                    <span tabIndex={0} className="sr-only" />
+                    {(
+                      [
+                        { key: "auto", label: "Auto" },
+                        { key: "full", label: "Full Resolution" },
+                        { key: "proxy", label: "Mobile Proxy" },
+                      ] as { key: PlaybackQuality; label: string }[]
+                    ).map(({ key, label }) => (
+                      <MenuItem
+                        key={key}
+                        className={
+                          isDesktop
+                            ? "cursor-pointer"
+                            : "flex items-center p-2 text-sm"
+                        }
+                        aria-label={label}
+                        onClick={() => setPlaybackQuality(key)}
+                      >
+                        {playbackQuality === key ? (
+                          <>
+                            <LuMonitor className="mr-2 size-4" />
+                            {label}
+                          </>
+                        ) : (
+                          <span className="ml-6 mr-2">{label}</span>
+                        )}
+                      </MenuItem>
+                    ))}
+                  </SubItemContent>
+                </Portal>
+              </SubItem>
+            )}
             <DropdownMenuLabel className={isDesktop ? "mt-3" : "mt-1"}>
               {t("menu.help")}
             </DropdownMenuLabel>

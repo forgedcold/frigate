@@ -19,6 +19,7 @@ import {
   calculateSeekPosition,
 } from "@/utils/videoUtil";
 import { isFirefox } from "react-device-detect";
+import { useResolvedPlaybackQuality } from "@/hooks/use-playback-quality";
 
 /**
  * Dynamically switches between video playback and scrubbing preview player.
@@ -62,6 +63,17 @@ export default function DynamicVideoPlayer({
   const { t } = useTranslation(["components/player"]);
   const apiHost = useApiHost();
   const { data: config } = useSWR<FrigateConfig>("config");
+  const resolvedQuality = useResolvedPlaybackQuality();
+
+  // check if this camera has a playback role configured
+  const hasPlaybackRole = useMemo(() => {
+    if (!config) return false;
+    const cameraConfig = config.cameras[camera];
+    if (!cameraConfig) return false;
+    return cameraConfig.ffmpeg.inputs.some((input: { roles: string[] }) =>
+      input.roles.includes("playback"),
+    );
+  }, [config, camera]);
 
   // for detail stream context in History
   const {
@@ -210,8 +222,12 @@ export default function DynamicVideoPlayer({
       );
     }
 
+    const vodPath =
+      hasPlaybackRole && resolvedQuality === "proxy"
+        ? "vod-proxy"
+        : "vod";
     setSource({
-      playlist: `${apiHost}vod/${camera}/start/${recordingParams.after}/end/${recordingParams.before}/master.m3u8`,
+      playlist: `${apiHost}${vodPath}/${camera}/start/${recordingParams.after}/end/${recordingParams.before}/master.m3u8`,
       startPosition,
     });
 

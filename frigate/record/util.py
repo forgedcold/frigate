@@ -28,7 +28,9 @@ def remove_empty_directories(directory: str) -> None:
             os.rmdir(path)
 
 
-def sync_recordings(limited: bool) -> None:
+def sync_recordings(
+    limited: bool, recording_dirs: list[str] | None = None
+) -> None:
     """Check the db for stale recordings entries that don't exist in the filesystem."""
 
     def delete_db_entries_without_file(check_timestamp: float) -> bool:
@@ -117,6 +119,8 @@ def sync_recordings(limited: bool) -> None:
 
     logger.debug("Start sync recordings.")
 
+    dirs_to_walk = recording_dirs if recording_dirs else [RECORD_DIR]
+
     # start checking on the hour 36 hours ago
     check_point = datetime.datetime.now().replace(
         minute=0, second=0, microsecond=0
@@ -127,20 +131,24 @@ def sync_recordings(limited: bool) -> None:
     if db_success:
         if limited:
             # get recording files from last 36 hours
-            hour_check = f"{RECORD_DIR}/{check_point.strftime('%Y-%m-%d/%H')}"
-            files_on_disk = {
-                os.path.join(root, file)
-                for root, _, files in os.walk(RECORD_DIR)
-                for file in files
-                if root > hour_check
-            }
+            files_on_disk = set()
+            for rec_dir in dirs_to_walk:
+                hour_check = f"{rec_dir}/{check_point.strftime('%Y-%m-%d/%H')}"
+                files_on_disk.update(
+                    os.path.join(root, file)
+                    for root, _, files in os.walk(rec_dir)
+                    for file in files
+                    if root > hour_check
+                )
         else:
             # get all recordings files on disk and put them in a set
-            files_on_disk = {
-                os.path.join(root, file)
-                for root, _, files in os.walk(RECORD_DIR)
-                for file in files
-            }
+            files_on_disk = set()
+            for rec_dir in dirs_to_walk:
+                files_on_disk.update(
+                    os.path.join(root, file)
+                    for root, _, files in os.walk(rec_dir)
+                    for file in files
+                )
 
         delete_files_without_db_entry(files_on_disk)
 
