@@ -20,3 +20,4 @@ core
 !/web/**/*.ts
 .idea/*
 .ipynb_checkpoints
+docs/personal
