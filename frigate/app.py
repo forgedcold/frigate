@@ -37,7 +37,6 @@ from frigate.const import (
     EXPORT_DIR,
     FACE_DIR,
     MODEL_CACHE_DIR,
-    RECORD_DIR,
     THUMB_DIR,
     TRIGGER_DIR,
 )
@@ -76,6 +75,7 @@ from frigate.track.object_processing import TrackedObjectProcessor
 from frigate.util.builtin import empty_and_close_queue
 from frigate.util.image import UntrackedSharedMemory
 from frigate.util.services import set_file_limit
+from frigate.util.storage_tiers import get_all_recording_dirs
 from frigate.version import VERSION
 from frigate.watchdog import FrigateWatchdog
 
@@ -118,19 +118,29 @@ class FrigateApp:
     def ensure_dirs(self) -> None:
         dirs = [
             CONFIG_DIR,
-            RECORD_DIR,
             THUMB_DIR,
             f"{CLIPS_DIR}/cache",
             CACHE_DIR,
             MODEL_CACHE_DIR,
             EXPORT_DIR,
         ]
+        dirs.extend(get_all_recording_dirs(self.config))
 
         if self.config.face_recognition.enabled:
             dirs.append(FACE_DIR)
 
         if self.config.semantic_search.enabled:
             dirs.append(TRIGGER_DIR)
+
+        has_playback = any(
+            any("playback" in input.roles for input in camera.ffmpeg.inputs)
+            for camera in self.config.cameras.values()
+        )
+        if has_playback:
+            dirs.extend(
+                os.path.join(recording_dir, "mobile")
+                for recording_dir in get_all_recording_dirs(self.config)
+            )
 
         for d in dirs:
             if not os.path.exists(d) and not os.path.islink(d):

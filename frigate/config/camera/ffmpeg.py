@@ -92,6 +92,7 @@ class CameraRoleEnum(str, Enum):
     audio = "audio"
     record = "record"
     detect = "detect"
+    playback = "playback"
 
 
 class CameraInput(FrigateBaseModel):

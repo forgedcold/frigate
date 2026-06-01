@@ -12,7 +12,7 @@ import requests
 from requests.exceptions import RequestException
 
 from frigate.config import FrigateConfig
-from frigate.const import CACHE_DIR, CLIPS_DIR, RECORD_DIR
+from frigate.const import CACHE_DIR, CLIPS_DIR
 from frigate.data_processing.types import DataProcessorMetrics
 from frigate.object_detection.base import ObjectDetectProcess
 from frigate.types import StatsTrackingTypes
@@ -30,6 +30,7 @@ from frigate.util.services import (
     get_rockchip_npu_stats,
     is_vaapi_amd_driver,
 )
+from frigate.util.storage_tiers import get_all_recording_dirs
 from frigate.version import VERSION
 
 
@@ -392,7 +393,8 @@ def stats_snapshot(
         "last_updated": int(time.time()),
     }
 
-    for path in [RECORD_DIR, CLIPS_DIR, CACHE_DIR]:
+    storage_paths = [*get_all_recording_dirs(config), CLIPS_DIR, CACHE_DIR]
+    for path in dict.fromkeys(storage_paths):
         try:
             storage_stats = shutil.disk_usage(path)
         except (FileNotFoundError, OSError):

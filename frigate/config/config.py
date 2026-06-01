@@ -67,6 +67,7 @@ from .logger import LoggerConfig
 from .mqtt import MqttConfig
 from .network import NetworkingConfig
 from .proxy import ProxyConfig
+from .storage import StorageConfig
 from .telemetry import TelemetryConfig
 from .tls import TlsConfig
 from .ui import UIConfig
@@ -331,6 +332,9 @@ class FrigateConfig(FrigateBaseModel):
     )
     proxy: ProxyConfig = Field(
         default_factory=ProxyConfig, title="Proxy configuration."
+    )
+    storage: StorageConfig = Field(
+        default_factory=StorageConfig, title="Storage configuration."
     )
     telemetry: TelemetryConfig = Field(
         default_factory=TelemetryConfig, title="Telemetry configuration."

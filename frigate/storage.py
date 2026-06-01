@@ -3,14 +3,12 @@
 import logging
 import shutil
 import threading
-from pathlib import Path
 
 from peewee import SQL, fn
 
 from frigate.config import FrigateConfig
-from frigate.const import RECORD_DIR
 from frigate.models import Event, Recordings
-from frigate.util.builtin import clear_and_unlink
+from frigate.util.storage_tiers import clear_recording_path, get_hot_tier_path
 
 logger = logging.getLogger(__name__)
 bandwidth_equation = Recordings.segment_size / (
@@ -102,7 +100,8 @@ class StorageMaintainer(threading.Thread):
         hourly_bandwidth = sum(
             [b["bandwidth"] for b in self.camera_storage_stats.values()]
         )
-        remaining_storage = round(shutil.disk_usage(RECORD_DIR).free / pow(2, 20), 1)
+        hot_path = get_hot_tier_path(self.config)
+        remaining_storage = round(shutil.disk_usage(hot_path).free / pow(2, 20), 1)
         logger.debug(
             f"Storage cleanup check: {hourly_bandwidth} hourly with remaining storage: {remaining_storage}."
         )
@@ -178,7 +177,7 @@ class StorageMaintainer(threading.Thread):
             # Delete recordings not retained indefinitely
             if not keep:
                 try:
-                    clear_and_unlink(Path(recording.path), missing_ok=False)
+                    clear_recording_path(self.config, recording.path, missing_ok=False)
                     deleted_recordings.append(recording)
                     deleted_segments_size += recording.segment_size
                 except FileNotFoundError:
@@ -209,7 +208,7 @@ class StorageMaintainer(threading.Thread):
                     break
 
                 try:
-                    clear_and_unlink(Path(recording.path), missing_ok=False)
+                    clear_recording_path(self.config, recording.path, missing_ok=False)
                     deleted_segments_size += recording.segment_size
                     deleted_recordings.append(recording)
                 except FileNotFoundError:

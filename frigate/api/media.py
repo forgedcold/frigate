@@ -44,13 +44,13 @@ from frigate.const import (
     INSTALL_DIR,
     MAX_SEGMENT_DURATION,
     PREVIEW_FRAME_TYPE,
-    RECORD_DIR,
 )
 from frigate.models import Event, Previews, Recordings, Regions, ReviewSegment
 from frigate.track.object_processing import TrackedObjectProcessor
 from frigate.util.file import get_event_thumbnail_bytes
 from frigate.util.image import get_image_from_recording
 from frigate.util.media import get_keyframe_before
+from frigate.util.storage_tiers import get_hot_tier_path, resolve_recording_path
 from frigate.util.time import get_dst_transitions
 
 logger = logging.getLogger(__name__)
@@ -274,6 +274,7 @@ async def get_snapshot_from_recording(
                 )
             )
             .where(Recordings.camera == camera_name)
+            .where(Recordings.quality == "full")
             .order_by(Recordings.start_time.desc())
             .limit(1)
             .get()
@@ -295,6 +296,7 @@ async def get_snapshot_from_recording(
                     )
                 )
                 .where(Recordings.camera == camera_name)
+                .where(Recordings.quality == "full")
                 .order_by(Recordings.start_time.desc())
                 .limit(1)
                 .get()
@@ -307,9 +309,10 @@ async def get_snapshot_from_recording(
         codec = "png" if format == "png" else "mjpeg"
         mime_type = "png" if format == "png" else "jpeg"
         config: FrigateConfig = request.app.frigate_config
+        recording_path = resolve_recording_path(config, recording.path)
 
         image_data = get_image_from_recording(
-            config.ffmpeg, recording.path, time_in_segment, codec, height
+            config.ffmpeg, recording_path, time_in_segment, codec, height
         )
 
         if not image_data:
@@ -358,6 +361,7 @@ async def submit_recording_snapshot_to_plus(
             )
         )
         .where(Recordings.camera == camera_name)
+        .where(Recordings.quality == "full")
         .order_by(Recordings.start_time.desc())
         .limit(1)
     )
@@ -366,8 +370,9 @@ async def submit_recording_snapshot_to_plus(
         config: FrigateConfig = request.app.frigate_config
         recording: Recordings = recording_query.get()
         time_in_segment = frame_time - recording.start_time
+        recording_path = resolve_recording_path(config, recording.path)
         image_data = get_image_from_recording(
-            config.ffmpeg, recording.path, time_in_segment, "png"
+            config.ffmpeg, recording_path, time_in_segment, "png"
         )
 
         if not image_data:
@@ -401,9 +406,10 @@ async def submit_recording_snapshot_to_plus(
 
 @router.get("/recordings/storage", dependencies=[Depends(allow_any_authenticated())])
 def get_recordings_storage_usage(request: Request):
+    hot_path = get_hot_tier_path(request.app.frigate_config)
     recording_stats = request.app.stats_emitter.get_latest_stats()["service"][
         "storage"
-    ][RECORD_DIR]
+    ][hot_path]
 
     if not recording_stats:
         return JSONResponse({})
@@ -447,6 +453,7 @@ def all_recordings_summary(
             fn.MAX(Recordings.start_time).alias("max_time"),
         )
         .where(Recordings.camera << camera_list)
+        .where(Recordings.quality == "full")
         .dicts()
         .get()
     )
@@ -483,6 +490,7 @@ def all_recordings_summary(
                 (Recordings.camera << camera_list)
                 & (Recordings.end_time >= period_start)
                 & (Recordings.start_time <= period_end)
+                & (Recordings.quality == "full")
             )
             .group_by(
                 fn.strftime(
@@ -517,6 +525,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
             fn.MAX(Recordings.start_time).alias("max_time"),
         )
         .where(Recordings.camera == camera_name)
+        .where(Recordings.quality == "full")
         .dicts()
         .get()
     )
@@ -556,6 +565,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
                 (Recordings.camera == camera_name)
                 & (Recordings.end_time >= period_start)
                 & (Recordings.start_time <= period_end)
+                & (Recordings.quality == "full")
             )
             .group_by((Recordings.start_time + period_offset).cast("int") / 3600)
             .order_by(Recordings.start_time.desc())
@@ -632,6 +642,7 @@ async def recordings(
             Recordings.camera == camera_name,
             Recordings.end_time >= after,
             Recordings.start_time <= before,
+            Recordings.quality == "full",
         )
         .order_by(Recordings.start_time)
         .dicts()
@@ -669,7 +680,11 @@ async def no_recordings(
     )
     scale = params.scale
 
-    clauses = [(Recordings.end_time >= after) & (Recordings.start_time <= before)]
+    clauses = [
+        (Recordings.end_time >= after)
+        & (Recordings.start_time <= before)
+        & (Recordings.quality == "full")
+    ]
     if cameras != "all":
         camera_list = cameras.split(",")
         clauses.append((Recordings.camera << camera_list))
@@ -769,6 +784,7 @@ async def recording_clip(
             | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
         )
         .where(Recordings.camera == camera_name)
+        .where(Recordings.quality == "full")
         .order_by(Recordings.start_time.asc())
     )
 
@@ -786,7 +802,9 @@ async def recording_clip(
     with open(file_path, "w") as file:
         clip: Recordings
         for clip in recordings:
-            file.write(f"file '{clip.path}'\n")
+            file.write(
+                f"file '{resolve_recording_path(request.app.frigate_config, clip.path)}'\n"
+            )
 
             # if this is the starting clip, add an inpoint
             if clip.start_time < start_ts:
@@ -840,17 +858,20 @@ async def recording_clip(
     description="Returns an HLS playlist for the specified timestamp-range on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
 async def vod_ts(
+    request: Request,
     camera_name: str,
     start_ts: float,
     end_ts: float,
     force_discontinuity: bool = False,
+    quality: str = "full",
 ):
     logger.debug(
-        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s",
+        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s quality=%s",
         camera_name,
         start_ts,
         end_ts,
         force_discontinuity,
+        quality,
     )
     recordings = (
         Recordings.select(
@@ -865,6 +886,7 @@ async def vod_ts(
             | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
         )
         .where(Recordings.camera == camera_name)
+        .where(Recordings.quality == quality)
         .order_by(Recordings.start_time.asc())
         .iterator()
     )
@@ -875,16 +897,18 @@ async def vod_ts(
     max_duration_ms = MAX_SEGMENT_DURATION * 1000
 
     recording: Recordings
+    config: FrigateConfig = request.app.frigate_config
     for recording in recordings:
+        recording_path = resolve_recording_path(config, recording.path)
         logger.debug(
             "VOD: processing recording: %s start=%s end=%s duration=%s",
-            recording.path,
+            recording_path,
             recording.start_time,
             recording.end_time,
             recording.duration,
         )
 
-        clip = {"type": "source", "path": recording.path}
+        clip = {"type": "source", "path": recording_path}
         duration = int(recording.duration * 1000)
 
         # adjust start offset if start_ts is after recording.start_time
@@ -895,7 +919,7 @@ async def vod_ts(
             logger.debug(
                 "VOD: applied clipFrom %sms to %s",
                 inpoint,
-                recording.path,
+                recording_path,
             )
 
         # adjust end if recording.end_time is after end_ts
@@ -907,7 +931,7 @@ async def vod_ts(
         # segment. Snap clipFrom back to the preceding keyframe so the
         # segment always starts with a decodable frame.
         if "clipFrom" in clip:
-            keyframe_ms = get_keyframe_before(recording.path, clip["clipFrom"])
+            keyframe_ms = get_keyframe_before(recording_path, clip["clipFrom"])
             if keyframe_ms is not None:
                 gained = clip["clipFrom"] - keyframe_ms
                 clip["clipFrom"] = keyframe_ms
@@ -915,14 +939,14 @@ async def vod_ts(
                 logger.debug(
                     "VOD: snapped clipFrom to keyframe at %sms for %s, duration now %sms",
                     keyframe_ms,
-                    recording.path,
+                    recording_path,
                     duration,
                 )
             else:
                 # could not read keyframes, remove clipFrom to use full recording
                 logger.debug(
                     "VOD: no keyframe info for %s, removing clipFrom to use full recording",
-                    recording.path,
+                    recording_path,
                 )
                 del clip["clipFrom"]
                 duration = int(recording.duration * 1000)
@@ -933,7 +957,7 @@ async def vod_ts(
             # skip if the clip has no valid duration (too short to contain frames)
             logger.debug(
                 "VOD: skipping recording %s - resulting duration %sms too short",
-                recording.path,
+                recording_path,
                 duration,
             )
             continue
@@ -944,12 +968,12 @@ async def vod_ts(
             durations.append(duration)
             logger.debug(
                 "VOD: added clip %s duration_ms=%s clipFrom=%s",
-                recording.path,
+                recording_path,
                 duration,
                 clip.get("clipFrom"),
             )
         else:
-            logger.warning(f"Recording clip is missing or empty: {recording.path}")
+            logger.warning(f"Recording clip is missing or empty: {recording_path}")
 
     if not clips:
         logger.error(
@@ -981,10 +1005,17 @@ async def vod_ts(
     dependencies=[Depends(require_camera_access)],
     description="Returns an HLS playlist for the specified date-time on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
-async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name: str):
+async def vod_hour_no_timezone(
+    request: Request, year_month: str, day: int, hour: int, camera_name: str
+):
     """VOD for specific hour. Uses the default timezone (UTC)."""
     return await vod_hour(
-        year_month, day, hour, camera_name, get_localzone_name().replace("/", ",")
+        request,
+        year_month,
+        day,
+        hour,
+        camera_name,
+        get_localzone_name().replace("/", ","),
     )
 
 
@@ -994,6 +1025,7 @@ async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name
     description="Returns an HLS playlist for the specified date-time (with timezone) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
 async def vod_hour(
+    request: Request,
     year_month: str, day: int, hour: int, camera_name: str, tz_name: str
 ):
     parts = year_month.split("-")
@@ -1005,7 +1037,7 @@ async def vod_hour(
     start_ts = start_date.timestamp()
     end_ts = end_date.timestamp()
 
-    return await vod_ts(camera_name, start_ts, end_ts)
+    return await vod_ts(request, camera_name, start_ts, end_ts)
 
 
 @router.get(
@@ -1037,7 +1069,7 @@ async def vod_event(
         if event.end_time is None
         else (event.end_time + padding)
     )
-    vod_response = await vod_ts(event.camera, event.start_time - padding, end_ts)
+    vod_response = await vod_ts(request, event.camera, event.start_time - padding, end_ts)
 
     # If the recordings are not found and the event started more than 5 minutes ago, set has_clip to false
     if (
@@ -1057,11 +1089,29 @@ async def vod_event(
     description="Returns an HLS playlist for a timestamp range with HLS discontinuity enabled. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
 async def vod_clip(
+    request: Request,
     camera_name: str,
     start_ts: float,
     end_ts: float,
 ):
-    return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True)
+    return await vod_ts(request, camera_name, start_ts, end_ts, force_discontinuity=True)
+
+
+@router.get(
+    "/vod-mobile/{camera_name}/start/{start_ts}/end/{end_ts}",
+    dependencies=[Depends(require_camera_access)],
+    description="Returns an HLS playlist for mobile-quality recordings. Same as vod_ts but hardcoded to quality=mobile.",
+)
+async def vod_mobile_ts(
+    request: Request,
+    camera_name: str,
+    start_ts: float,
+    end_ts: float,
+    force_discontinuity: bool = False,
+):
+    return await vod_ts(
+        request, camera_name, start_ts, end_ts, force_discontinuity, quality="mobile"
+    )
 
 
 @router.get(

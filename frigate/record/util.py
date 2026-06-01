@@ -8,6 +8,7 @@ from peewee import DatabaseError, chunked
 
 from frigate.const import RECORD_DIR
 from frigate.models import Recordings, RecordingsToDelete
+from frigate.util.storage_tiers import get_all_recording_dirs, resolve_recording_path
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def remove_empty_directories(directory: str) -> None:
             os.rmdir(path)
 
 
-def sync_recordings(limited: bool) -> None:
+def sync_recordings(limited: bool, config=None) -> None:
     """Check the db for stale recordings entries that don't exist in the filesystem."""
 
     def delete_db_entries_without_file(check_timestamp: float) -> bool:
@@ -49,7 +50,12 @@ def sync_recordings(limited: bool) -> None:
 
         for page in range(num_pages):
             for recording in recordings.paginate(page, page_size):
-                if not os.path.exists(recording.path):
+                path = (
+                    resolve_recording_path(config, recording.path)
+                    if config is not None
+                    else recording.path
+                )
+                if not os.path.exists(path):
                     recordings_to_delete.add(recording.id)
 
         if len(recordings_to_delete) == 0:
@@ -127,18 +133,26 @@ def sync_recordings(limited: bool) -> None:
     if db_success:
         if limited:
             # get recording files from last 36 hours
-            hour_check = f"{RECORD_DIR}/{check_point.strftime('%Y-%m-%d/%H')}"
+            recording_dirs = (
+                get_all_recording_dirs(config) if config is not None else [RECORD_DIR]
+            )
+            hour_suffix = check_point.strftime("%Y-%m-%d/%H")
             files_on_disk = {
                 os.path.join(root, file)
-                for root, _, files in os.walk(RECORD_DIR)
+                for recording_dir in recording_dirs
+                for root, _, files in os.walk(recording_dir)
                 for file in files
-                if root > hour_check
+                if root > f"{recording_dir}/{hour_suffix}"
             }
         else:
+            recording_dirs = (
+                get_all_recording_dirs(config) if config is not None else [RECORD_DIR]
+            )
             # get all recordings files on disk and put them in a set
             files_on_disk = {
                 os.path.join(root, file)
-                for root, _, files in os.walk(RECORD_DIR)
+                for recording_dir in recording_dirs
+                for root, _, files in os.walk(recording_dir)
                 for file in files
             }
 

@@ -78,6 +78,7 @@ class Recordings(Model):
     dBFS = IntegerField(null=True)
     segment_size = FloatField(default=0)  # this should be stored as MB
     regions = IntegerField(null=True)
+    quality = CharField(default="full", max_length=10)
 
 
 class Export(Model):

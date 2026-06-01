@@ -11,10 +11,11 @@ from pathlib import Path
 from playhouse.sqlite_ext import SqliteExtDatabase
 
 from frigate.config import CameraConfig, FrigateConfig, RetainModeEnum
-from frigate.const import CACHE_DIR, CLIPS_DIR, MAX_WAL_SIZE, RECORD_DIR
+from frigate.const import CACHE_DIR, CLIPS_DIR, MAX_WAL_SIZE
 from frigate.models import Previews, Recordings, ReviewSegment, UserReviewStatus
 from frigate.record.util import remove_empty_directories, sync_recordings
 from frigate.util.builtin import clear_and_unlink
+from frigate.util.storage_tiers import clear_recording_path, get_all_recording_dirs
 from frigate.util.time import get_tomorrow_at_time
 
 logger = logging.getLogger(__name__)
@@ -191,7 +192,7 @@ class RecordingCleanup(threading.Thread):
                 )
                 or (mode == RetainModeEnum.active_objects and recording.objects == 0)
             ):
-                Path(recording.path).unlink(missing_ok=True)
+                clear_recording_path(self.config, recording.path)
                 deleted_recordings.add(recording.id)
             else:
                 kept_recordings.append((recording.start_time, recording.end_time))
@@ -293,7 +294,7 @@ class RecordingCleanup(threading.Thread):
 
         deleted_recordings = set()
         for recording in no_camera_recordings:
-            Path(recording.path).unlink(missing_ok=True)
+            clear_recording_path(self.config, recording.path)
             deleted_recordings.add(recording.id)
 
         logger.debug(f"Expiring {len(deleted_recordings)} recordings")
@@ -356,7 +357,7 @@ class RecordingCleanup(threading.Thread):
 
         # on startup sync recordings with disk if enabled
         if self.config.record.sync_recordings:
-            sync_recordings(limited=False)
+            sync_recordings(limited=False, config=self.config)
             next_sync = get_tomorrow_at_time(3)
 
         # Expire tmp clips every minute, recordings and clean directories every hour.
@@ -372,11 +373,12 @@ class RecordingCleanup(threading.Thread):
                 and datetime.datetime.now().astimezone(datetime.timezone.utc)
                 > next_sync
             ):
-                sync_recordings(limited=True)
+                sync_recordings(limited=True, config=self.config)
                 next_sync = get_tomorrow_at_time(3)
 
             if counter == 0:
                 self.clean_tmp_clips()
                 self.expire_recordings()
-                remove_empty_directories(RECORD_DIR)
+                for recording_dir in get_all_recording_dirs(self.config):
+                    remove_empty_directories(recording_dir)
                 self.truncate_wal()
