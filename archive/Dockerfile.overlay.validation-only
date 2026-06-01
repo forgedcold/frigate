@@ -1,0 +1,6 @@
+FROM frigate-tiered:latest
+
+COPY frigate /opt/frigate/frigate
+COPY migrations /opt/frigate/migrations
+COPY labelmap.txt /labelmap.txt
+COPY audio-labelmap.txt /audio-labelmap.txt

@@ -1,0 +1,1018 @@
+diff --git a/config/config.yml.example b/config/config.yml.example
+index 87deab16..208ac639 100644
+--- a/config/config.yml.example
++++ b/config/config.yml.example
+@@ -1,6 +1,15 @@
+ mqtt:
+   host: mqtt
+ 
++storage:
++  tiers:
++    - path: /media/frigate/recordings-hot
++      max_age_hours: 24
++    - path: /media/nas/frigate-recordings
++      max_age_hours: null
++  migration_interval: 300
++  migration_timeout: 120
++
+ cameras:
+   test:
+     ffmpeg:
+diff --git a/docs/docs/configuration/record.md b/docs/docs/configuration/record.md
+index 4dfd8b77..61288f55 100644
+--- a/docs/docs/configuration/record.md
++++ b/docs/docs/configuration/record.md
+@@ -3,9 +3,27 @@ id: record
+ title: Recording
+ ---
+ 
+-Recordings can be enabled and are stored at `/media/frigate/recordings`. The folder structure for the recordings is `YYYY-MM-DD/HH/<camera_name>/MM.SS.mp4` in **UTC time**. These recordings are written directly from your camera stream without re-encoding. Each camera supports a configurable retention policy in the config. Frigate chooses the largest matching retention value between the recording retention and the tracked object retention when determining if a recording should be removed.
++Recordings can be enabled and are stored in Frigate's configured recording directory or storage tiers. By default, recordings live at `/media/frigate/recordings`. The folder structure for the recordings is `YYYY-MM-DD/HH/<camera_name>/MM.SS.mp4` in **UTC time**. These recordings are written directly from your camera stream without re-encoding. Each camera supports a configurable retention policy in the config. Frigate chooses the largest matching retention value between the recording retention and the tracked object retention when determining if a recording should be removed.
+ 
+-New recording segments are written from the camera stream to cache, they are only moved to disk if they match the setup recording retention policy.
++Frigate supports two storage modes:
++
++- Single-tier storage: recordings stay on the default `RECORD_DIR` path.
++- Tiered storage: recordings are written to the first configured tier, then migrated to later tiers as they age.
++
++Tiered storage is designed for a hot local disk plus colder NAS archive storage. The UI still resolves recordings from either tier, so archived footage remains viewable without using a filesystem union mount like `mergerfs`.
++
++```yaml
++storage:
++  tiers:
++    - path: /media/frigate/recordings-hot
++      max_age_hours: 24
++    - path: /media/nas/frigate-recordings
++      max_age_hours: null
++  migration_interval: 300
++  migration_timeout: 120
++```
++
++In this example, new recordings land on the fast local tier first. After 24 hours, Frigate migrates eligible segments to the NAS tier. The last tier must keep `max_age_hours: null` because it is the final resting place.
+ 
+ H265 recordings can be viewed in Chrome 108+, Edge and Safari only. All other browsers require recordings to be encoded with H264.
+ 
+@@ -157,7 +175,7 @@ record:
+   sync_recordings: True
+ ```
+ 
+-This feature is meant to fix variations in files, not completely delete entries in the database. If you delete all of your media, don't use `sync_recordings`, just stop Frigate, delete the `frigate.db` database, and restart.
++This feature is meant to fix variations in files, not to implement tiering or move recordings between paths. When storage tiers are configured, Frigate checks all configured recording directories while syncing. If you delete all of your media, don't use `sync_recordings`, just stop Frigate, delete the `frigate.db` database, and restart.
+ 
+ :::warning
+ 
+diff --git a/frigate/api/media.py b/frigate/api/media.py
+index dde74761..4f7a7f8e 100644
+--- a/frigate/api/media.py
++++ b/frigate/api/media.py
+@@ -1053,21 +1053,20 @@ async def vod_clip(
+ 
+ 
+ @router.get(
+-    "/vod-proxy/{camera_name}/start/{start_ts}/end/{end_ts}",
++    "/vod-mobile/{camera_name}/start/{start_ts}/end/{end_ts}",
+     dependencies=[Depends(require_camera_access)],
+-    description="Returns an HLS playlist for proxy (mobile-quality) recordings. Same as vod_ts but hardcoded to quality=proxy.",
++    description="Returns an HLS playlist for mobile-quality recordings. Same as vod_ts but hardcoded to quality=mobile.",
+ )
+-async def vod_proxy_ts(
++async def vod_mobile_ts(
+     camera_name: str,
+     start_ts: float,
+     end_ts: float,
+     force_discontinuity: bool = False,
+ ):
+     return await vod_ts(
+-        camera_name, start_ts, end_ts, force_discontinuity, quality="proxy"
++        camera_name, start_ts, end_ts, force_discontinuity, quality="mobile"
+     )
+ 
+-
+ @router.get(
+     "/events/{event_id}/snapshot.jpg",
+     description="Returns a snapshot image for the specified object id. NOTE: The query params only take affect while the event is in-progress. Once the event has ended the snapshot configuration is used.",
+diff --git a/frigate/app.py b/frigate/app.py
+index 4ffde692..ed4b496e 100644
+--- a/frigate/app.py
++++ b/frigate/app.py
+@@ -143,9 +143,9 @@ class FrigateApp:
+             if tier.path not in dirs:
+                 dirs.append(tier.path)
+             if has_playback:
+-                proxy_path = os.path.join(tier.path, "proxy")
+-                if proxy_path not in dirs:
+-                    dirs.append(proxy_path)
++                mobile_path = os.path.join(tier.path, "mobile")
++                if mobile_path not in dirs:
++                    dirs.append(mobile_path)
+ 
+         for d in dirs:
+             if not os.path.exists(d) and not os.path.islink(d):
+diff --git a/frigate/config/storage.py b/frigate/config/storage.py
+index 65a90b12..792d2c73 100644
+--- a/frigate/config/storage.py
++++ b/frigate/config/storage.py
+@@ -28,6 +28,11 @@ class StorageConfig(FrigateBaseModel):
+         ge=60,
+         title="Seconds between tier migration cycles.",
+     )
++    migration_timeout: int = Field(
++        default=120,
++        ge=1,
++        title="Seconds to allow a single tier migration filesystem operation before timing out.",
++    )
+ 
+     @field_validator("tiers")
+     @classmethod
+diff --git a/frigate/models.py b/frigate/models.py
+index d81ee075..739f62ba 100644
+--- a/frigate/models.py
++++ b/frigate/models.py
+@@ -78,7 +78,7 @@ class Recordings(Model):
+     dBFS = IntegerField(null=True)
+     segment_size = FloatField(default=0)  # this should be stored as MB
+     regions = IntegerField(null=True)
+-    quality = CharField(default="full", max_length=10)  # "full" or "proxy"
++    quality = CharField(default="full", max_length=10)  # "full" or "mobile"
+ 
+ 
+ class Export(Model):
+diff --git a/frigate/record/cleanup.py b/frigate/record/cleanup.py
+index c2381c33..0fb4e1f0 100644
+--- a/frigate/record/cleanup.py
++++ b/frigate/record/cleanup.py
+@@ -111,7 +111,7 @@ class RecordingCleanup(threading.Thread):
+         """Delete recordings for existing camera based on retention config."""
+         # Get the timestamp for cutoff of retained days
+ 
+-        # Get recordings to check for expiration (only full quality -- proxy follows)
++        # Get recordings to check for expiration (only full quality -- mobile follows)
+         recordings: Recordings = (
+             Recordings.select(
+                 Recordings.id,
+@@ -208,28 +208,28 @@ class RecordingCleanup(threading.Thread):
+                 Recordings.id << deleted_recordings_list[i : i + max_deletes]
+             ).execute()
+ 
+-        # also delete proxy recordings that have aged past the retention window
++        # also delete mobile recordings that have aged past the retention window
+         if deleted_recordings:
+-            proxy_recordings: Recordings = (
++            mobile_recordings: Recordings = (
+                 Recordings.select(Recordings.id, Recordings.path)
+                 .where(
+                     (Recordings.camera == config.name)
+-                    & (Recordings.quality == "proxy")
++                    & (Recordings.quality == "mobile")
+                     & (Recordings.end_time < motion_expire_date)
+                 )
+                 .namedtuples()
+                 .iterator()
+             )
+-            deleted_proxy = set()
+-            for proxy in proxy_recordings:
+-                Path(proxy.path).unlink(missing_ok=True)
+-                deleted_proxy.add(proxy.id)
+-            if deleted_proxy:
+-                logger.debug(f"Expiring {len(deleted_proxy)} proxy recordings")
+-                deleted_proxy_list = list(deleted_proxy)
+-                for i in range(0, len(deleted_proxy_list), max_deletes):
++            deleted_mobile = set()
++            for mobile in mobile_recordings:
++                Path(mobile.path).unlink(missing_ok=True)
++                deleted_mobile.add(mobile.id)
++            if deleted_mobile:
++                logger.debug(f"Expiring {len(deleted_mobile)} mobile recordings")
++                deleted_mobile_list = list(deleted_mobile)
++                for i in range(0, len(deleted_mobile_list), max_deletes):
+                     Recordings.delete().where(
+-                        Recordings.id << deleted_proxy_list[i : i + max_deletes]
++                        Recordings.id << deleted_mobile_list[i : i + max_deletes]
+                     ).execute()
+ 
+         previews: list[Previews] = (
+diff --git a/frigate/record/maintainer.py b/frigate/record/maintainer.py
+index 47523179..8a29efab 100644
+--- a/frigate/record/maintainer.py
++++ b/frigate/record/maintainer.py
+@@ -211,9 +211,14 @@ class RecordingMaintainer(threading.Thread):
+             grouped_recordings[camera] = sorted(
+                 grouped_recordings[camera], key=lambda s: s["start_time"]
+             )
++            record_config = self.config.cameras[camera].record
+ 
+             # only count non-playback segments for cache pruning
+-            non_playback = [r for r in grouped_recordings[camera] if not r.get("is_playback", False)]
++            non_playback = [
++                r
++                for r in grouped_recordings[camera]
++                if not r.get("is_playback", False)
++            ]
+ 
+             camera_info = self.object_recordings_info[camera]
+             most_recently_processed_frame_time = (
+@@ -245,9 +250,18 @@ class RecordingMaintainer(threading.Thread):
+                     self.end_time_cache.pop(cache_path, None)
+                     grouped_recordings[camera].remove(rec)
+ 
++                non_playback = [
++                    r
++                    for r in grouped_recordings[camera]
++                    if not r.get("is_playback", False)
++                ]
++
+             # see if detection has failed and unprocessed segments need to be deleted
+             unprocessed_segment_count = len(non_playback) - processed_segment_count
+-            if unprocessed_segment_count > keep_count:
++            if (
++                record_config.continuous.days <= 0
++                and unprocessed_segment_count > keep_count
++            ):
+                 logger.warning(
+                     f"Too many unprocessed recording segments in cache for {camera}. This likely indicates an issue with the detect stream, keeping the {keep_count} most recent segments out of {unprocessed_segment_count} and discarding the rest..."
+                 )
+@@ -258,6 +272,41 @@ class RecordingMaintainer(threading.Thread):
+                     self.end_time_cache.pop(cache_path, None)
+                     grouped_recordings[camera].remove(rec)
+ 
++                non_playback = [
++                    r
++                    for r in grouped_recordings[camera]
++                    if not r.get("is_playback", False)
++                ]
++
++            playback = [
++                r for r in grouped_recordings[camera] if r.get("is_playback", False)
++            ]
++
++            if not non_playback:
++                if len(playback) > keep_count:
++                    logger.warning(
++                        f"Too many playback-only recording segments in cache for {camera}. Keeping the {keep_count} most recent segments out of {len(playback)} and discarding the rest..."
++                    )
++                    to_remove = playback[:-keep_count]
++                    for rec in to_remove:
++                        cache_path = rec["cache_path"]
++                        Path(cache_path).unlink(missing_ok=True)
++                        self.end_time_cache.pop(cache_path, None)
++                        grouped_recordings[camera].remove(rec)
++
++                continue
++
++            # Playback segments are only useful while a matching full segment is still in cache.
++            oldest_full = non_playback[0]["start_time"]
++            orphaned_playback = [
++                r for r in playback if r["start_time"] < oldest_full
++            ]
++            for rec in orphaned_playback:
++                cache_path = rec["cache_path"]
++                Path(cache_path).unlink(missing_ok=True)
++                self.end_time_cache.pop(cache_path, None)
++                grouped_recordings[camera].remove(rec)
++
+         tasks = []
+         for camera, recordings in grouped_recordings.items():
+             # clear out all the object recording info for old frames
+@@ -399,11 +448,14 @@ class RecordingMaintainer(threading.Thread):
+             )
+ 
+         record_config = self.config.cameras[camera].record
+-        highest = None
+ 
+         if record_config.continuous.days > 0:
+-            highest = "continuous"
+-        elif record_config.motion.days > 0:
++            return await self.move_segment(
++                camera, start_time, end_time, duration, cache_path, RetainModeEnum.all
++            )
++
++        highest = None
++        if record_config.motion.days > 0:
+             highest = "motion"
+ 
+         # if we have continuous or motion recording enabled
+@@ -556,7 +608,7 @@ class RecordingMaintainer(threading.Thread):
+         if is_playback:
+             directory = os.path.join(
+                 hot_path,
+-                "proxy",
++                "mobile",
+                 start_time.strftime("%Y-%m-%d/%H"),
+                 camera,
+             )
+@@ -632,7 +684,7 @@ class RecordingMaintainer(threading.Thread):
+                     Recordings.regions.name: 0 if is_playback else segment_info.region_count,
+                     Recordings.dBFS.name: 0 if is_playback else segment_info.average_dBFS,
+                     Recordings.segment_size.name: segment_size,
+-                    Recordings.quality.name: "proxy" if is_playback else "full",
++                    Recordings.quality.name: "mobile" if is_playback else "full",
+                 }
+         except Exception as e:
+             logger.error(f"Unable to store recording segment {cache_path}")
+diff --git a/frigate/storage.py b/frigate/storage.py
+index 81e563da..c9eb33fb 100644
+--- a/frigate/storage.py
++++ b/frigate/storage.py
+@@ -276,6 +276,38 @@ class StorageMaintainer(threading.Thread):
+                     f"Updated has_clip to False for {len(events_to_update)} events"
+                 )
+ 
++            deleted_mobile_recordings = set()
++            for recording in deleted_recordings:
++                mobile_recordings = (
++                    Recordings.select(Recordings.id, Recordings.path)
++                    .where(
++                        Recordings.camera == recording.camera,
++                        Recordings.quality == "mobile",
++                        Recordings.start_time < recording.end_time,
++                        Recordings.end_time > recording.start_time,
++                    )
++                    .namedtuples()
++                )
++
++                for mobile_recording in mobile_recordings:
++                    try:
++                        clear_and_unlink(Path(mobile_recording.path), missing_ok=False)
++                    except FileNotFoundError:
++                        pass
++
++                    deleted_mobile_recordings.add(mobile_recording.id)
++
++            if deleted_mobile_recordings:
++                logger.debug(
++                    f"Expiring {len(deleted_mobile_recordings)} mobile recordings"
++                )
++                deleted_mobile_recordings_list = list(deleted_mobile_recordings)
++                for i in range(0, len(deleted_mobile_recordings_list), max_deletes):
++                    Recordings.delete().where(
++                        Recordings.id
++                        << deleted_mobile_recordings_list[i : i + max_deletes]
++                    ).execute()
++
+         deleted_recordings_list = [r.id for r in deleted_recordings]
+         for i in range(0, len(deleted_recordings_list), max_deletes):
+             Recordings.delete().where(
+diff --git a/frigate/test/http_api/base_http_test.py b/frigate/test/http_api/base_http_test.py
+index 16ded63f..57b30425 100644
+--- a/frigate/test/http_api/base_http_test.py
++++ b/frigate/test/http_api/base_http_test.py
+@@ -45,6 +45,13 @@ class BaseTestHttp(unittest.TestCase):
+ 
+         self.minimal_config = {
+             "mqtt": {"host": "mqtt"},
++            "model": {
++                "labelmap_path": os.path.abspath(
++                    os.path.join(
++                        os.path.dirname(__file__), "..", "..", "..", "labelmap.txt"
++                    )
++                )
++            },
+             "cameras": {
+                 "front_door": {
+                     "ffmpeg": {
+diff --git a/frigate/test/test_maintainer.py b/frigate/test/test_maintainer.py
+index d978cfd9..21f7421e 100644
+--- a/frigate/test/test_maintainer.py
++++ b/frigate/test/test_maintainer.py
+@@ -1,21 +1,61 @@
+ import sys
+ import unittest
+-from unittest.mock import MagicMock, patch
++import importlib
++from unittest.mock import AsyncMock, MagicMock, patch
+ 
+-# Mock complex imports before importing maintainer
+-sys.modules["frigate.comms.inter_process"] = MagicMock()
+-sys.modules["frigate.comms.detections_updater"] = MagicMock()
+-sys.modules["frigate.comms.recordings_updater"] = MagicMock()
+-sys.modules["frigate.config.camera.updater"] = MagicMock()
+-
+-# Now import the class under test
+-from frigate.config import FrigateConfig  # noqa: E402
+-from frigate.record.maintainer import RecordingMaintainer  # noqa: E402
++_mock_modules = {
++    "frigate.config": MagicMock(),
++    "frigate.comms.inter_process": MagicMock(),
++    "frigate.comms.detections_updater": MagicMock(),
++    "frigate.comms.recordings_updater": MagicMock(),
++    "frigate.config.camera.updater": MagicMock(),
++    "frigate.models": MagicMock(),
++    "frigate.review.types": MagicMock(),
++    "frigate.util.services": MagicMock(),
++}
+ 
+ 
+ class TestMaintainer(unittest.IsolatedAsyncioTestCase):
++    class _Expr:
++        def __eq__(self, other):
++            return self
++
++        def __ge__(self, other):
++            return self
++
++        def __or__(self, other):
++            return self
++
++    def _make_camera_config(self):
++        camera_config = MagicMock()
++        camera_config.record.enabled = True
++        camera_config.record.continuous.days = 0
++        return camera_config
++
++    def _make_review_query(self):
++        query = MagicMock()
++        query.where.return_value = query
++        query.order_by.return_value = []
++        return query
++
++    def _make_review_segment_model(self):
++        model = MagicMock()
++        model.select.return_value = self._make_review_query()
++        model.start_time = self._Expr()
++        model.end_time = self._Expr()
++        model.severity = self._Expr()
++        model.data = self._Expr()
++        model.camera = self._Expr()
++        return model
++
++    def _load_maintainer_module(self):
++        with patch.dict(sys.modules, _mock_modules, clear=False):
++            return importlib.import_module("frigate.record.maintainer")
++
+     async def test_move_files_survives_bad_filename(self):
+-        config = MagicMock(spec=FrigateConfig)
++        maintainer_module = self._load_maintainer_module()
++        RecordingMaintainer = maintainer_module.RecordingMaintainer
++        config = MagicMock()
+         config.cameras = {}
+         stop_event = MagicMock()
+ 
+@@ -30,10 +70,8 @@ class TestMaintainer(unittest.IsolatedAsyncioTestCase):
+ 
+         with patch("os.listdir", return_value=files):
+             with patch("os.path.isfile", return_value=True):
+-                with patch(
+-                    "frigate.record.maintainer.psutil.process_iter", return_value=[]
+-                ):
+-                    with patch("frigate.record.maintainer.logger.warning") as warn:
++                with patch.object(maintainer_module.psutil, "process_iter", return_value=[]):
++                    with patch.object(maintainer_module.logger, "warning") as warn:
+                         # Mock validate_and_move_segment to avoid further logic
+                         maintainer.validate_and_move_segment = MagicMock()
+ 
+@@ -61,6 +99,132 @@ class TestMaintainer(unittest.IsolatedAsyncioTestCase):
+                             f"Expected a single warning for unexpected files, got {len(matching)}",
+                         )
+ 
++    async def test_move_files_prunes_playback_only_cache_overflow(self):
++        maintainer_module = self._load_maintainer_module()
++        RecordingMaintainer = maintainer_module.RecordingMaintainer
++        config = MagicMock()
++        config.cameras = {"camera": self._make_camera_config()}
++        stop_event = MagicMock()
++
++        maintainer = RecordingMaintainer(config, stop_event)
++        maintainer.end_time_cache = {}
++        maintainer.validate_and_move_segment = AsyncMock(return_value=None)
++
++        files = [
++            f"camera~playback@2021010100000{i}+0000.mp4" for i in range(8)
++        ]
++
++        with patch("os.listdir", return_value=files):
++            with patch("os.path.isfile", return_value=True):
++                with patch.object(maintainer_module.psutil, "process_iter", return_value=[]):
++                    with patch.object(
++                        maintainer_module, "ReviewSegment", new=self._make_review_segment_model()
++                    ):
++                        with patch.object(
++                            maintainer_module.Path, "unlink", autospec=True
++                        ) as unlink:
++                            await maintainer.move_files()
++
++        self.assertEqual(2, unlink.call_count)
++        self.assertEqual(6, maintainer.validate_and_move_segment.await_count)
++
++    async def test_move_files_prunes_orphaned_playback_segments(self):
++        maintainer_module = self._load_maintainer_module()
++        RecordingMaintainer = maintainer_module.RecordingMaintainer
++        config = MagicMock()
++        config.cameras = {"camera": self._make_camera_config()}
++        stop_event = MagicMock()
++
++        maintainer = RecordingMaintainer(config, stop_event)
++        maintainer.end_time_cache = {}
++        maintainer.validate_and_move_segment = AsyncMock(return_value=None)
++
++        files = [
++            "camera~playback@20210101000000+0000.mp4",
++            "camera~playback@20210101000001+0000.mp4",
++            "camera~playback@20210101000002+0000.mp4",
++            "camera~playback@20210101000003+0000.mp4",
++            "camera@20210101000002+0000.mp4",
++            "camera@20210101000003+0000.mp4",
++        ]
++
++        with patch("os.listdir", return_value=files):
++            with patch("os.path.isfile", return_value=True):
++                with patch.object(maintainer_module.psutil, "process_iter", return_value=[]):
++                    with patch.object(
++                        maintainer_module, "ReviewSegment", new=self._make_review_segment_model()
++                    ):
++                        with patch.object(
++                            maintainer_module.Path, "unlink", autospec=True
++                        ) as unlink:
++                            await maintainer.move_files()
++
++        unlinked_paths = [str(call.args[0]) for call in unlink.call_args_list]
++        self.assertIn("/tmp/cache/camera~playback@20210101000000+0000.mp4", unlinked_paths)
++        self.assertIn("/tmp/cache/camera~playback@20210101000001+0000.mp4", unlinked_paths)
++        self.assertEqual(2, unlink.call_count)
++        self.assertEqual(4, maintainer.validate_and_move_segment.await_count)
++
++    async def test_move_files_keeps_unprocessed_segments_for_continuous_recording(self):
++        maintainer_module = self._load_maintainer_module()
++        RecordingMaintainer = maintainer_module.RecordingMaintainer
++        config = MagicMock()
++        camera_config = self._make_camera_config()
++        camera_config.record.continuous.days = 14
++        config.cameras = {"camera": camera_config}
++        stop_event = MagicMock()
++
++        maintainer = RecordingMaintainer(config, stop_event)
++        maintainer.end_time_cache = {}
++        maintainer.validate_and_move_segment = AsyncMock(return_value=None)
++
++        files = [f"camera@2021010100000{i}+0000.mp4" for i in range(8)]
++
++        with patch("os.listdir", return_value=files):
++            with patch("os.path.isfile", return_value=True):
++                with patch.object(maintainer_module.psutil, "process_iter", return_value=[]):
++                    with patch.object(
++                        maintainer_module, "ReviewSegment", new=self._make_review_segment_model()
++                    ):
++                        with patch.object(
++                            maintainer_module.Path, "unlink", autospec=True
++                        ) as unlink:
++                            await maintainer.move_files()
++
++        self.assertEqual(0, unlink.call_count)
++        self.assertEqual(8, maintainer.validate_and_move_segment.await_count)
++
++    async def test_validate_and_move_segment_moves_continuous_recordings_immediately(self):
++        maintainer_module = self._load_maintainer_module()
++        RecordingMaintainer = maintainer_module.RecordingMaintainer
++        config = MagicMock()
++        camera_config = self._make_camera_config()
++        camera_config.record.continuous.days = 14
++        config.cameras = {"camera": camera_config}
++        stop_event = MagicMock()
++
++        maintainer = RecordingMaintainer(config, stop_event)
++        maintainer.end_time_cache = {
++            "/tmp/cache/camera@20210101000000+0000.mp4": (
++                maintainer_module.datetime.datetime(2021, 1, 1, 0, 0, 10),
++                10.0,
++            )
++        }
++        maintainer.object_recordings_info["camera"] = []
++        maintainer.move_segment = AsyncMock(return_value={"quality": "full"})
++
++        result = await maintainer.validate_and_move_segment(
++            "camera",
++            [],
++            {
++                "cache_path": "/tmp/cache/camera@20210101000000+0000.mp4",
++                "start_time": maintainer_module.datetime.datetime(2021, 1, 1, 0, 0, 0),
++            },
++        )
++
++        self.assertEqual({"quality": "full"}, result)
++        maintainer.move_segment.assert_awaited_once()
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/frigate/test/test_storage.py b/frigate/test/test_storage.py
+index 4ae5715c..634618c4 100644
+--- a/frigate/test/test_storage.py
++++ b/frigate/test/test_storage.py
+@@ -31,6 +31,11 @@ class TestHttp(unittest.TestCase):
+ 
+         self.minimal_config = {
+             "mqtt": {"host": "mqtt"},
++            "model": {
++                "labelmap_path": os.path.abspath(
++                    os.path.join(os.path.dirname(__file__), "..", "..", "labelmap.txt")
++                )
++            },
+             "cameras": {
+                 "front_door": {
+                     "ffmpeg": {
+@@ -48,6 +53,11 @@ class TestHttp(unittest.TestCase):
+         }
+         self.double_cam_config = {
+             "mqtt": {"host": "mqtt"},
++            "model": {
++                "labelmap_path": os.path.abspath(
++                    os.path.join(os.path.dirname(__file__), "..", "..", "labelmap.txt")
++                )
++            },
+             "cameras": {
+                 "front_door": {
+                     "ffmpeg": {
+diff --git a/frigate/tier_migrator.py b/frigate/tier_migrator.py
+index 843a72ca..c893bf27 100644
+--- a/frigate/tier_migrator.py
++++ b/frigate/tier_migrator.py
+@@ -2,39 +2,202 @@
+ 
+ import datetime
+ import logging
++import multiprocessing
+ import os
++import queue
+ import shutil
+ import threading
++import time
+ from pathlib import Path
++from typing import TYPE_CHECKING
+ 
+-from frigate.config import FrigateConfig
+ from frigate.models import Recordings
+ 
++if TYPE_CHECKING:
++    from frigate.config import FrigateConfig
++
+ logger = logging.getLogger(__name__)
+ 
+ MIGRATION_BATCH_SIZE = 100
++MIGRATION_TIMEOUT_BACKOFF = 900
++MIGRATION_PROCESS_SHUTDOWN_TIMEOUT = 1
++
++
++def _check_tier_path(path: str, result_queue) -> None:
++    """Check tier availability in an isolated process.
++
++    NFS metadata operations can block indefinitely on hard mounts, so this
++    function must not run in Frigate's main process.
++    """
++    try:
++        result_queue.put(
++            {
++                "ok": os.path.isdir(path)
++                and shutil.disk_usage(path)
++                and os.access(path, os.W_OK)
++            }
++        )
++    except Exception as e:
++        result_queue.put({"ok": False, "error": str(e)})
++
++
++def _copy_segment_to_tier(
++    source_path: str, source_tier_path: str, dest_tier_path: str, result_queue
++) -> None:
++    """Copy one segment to the destination tier in an isolated process."""
++    temp_dest = None
++
++    try:
++        if not os.path.exists(source_path):
++            result_queue.put({"ok": False, "error": "source file missing"})
++            return
++
++        if not source_path.startswith(source_tier_path):
++            result_queue.put(
++                {
++                    "ok": False,
++                    "error": (
++                        f"recording path does not start with expected tier "
++                        f"{source_tier_path}"
++                    ),
++                }
++            )
++            return
++
++        relative_path = source_path[len(source_tier_path) :].lstrip("/")
++        dest_path = os.path.join(dest_tier_path, relative_path)
++        dest_dir = os.path.dirname(dest_path)
++        temp_dest = dest_path + ".tmp"
++
++        os.makedirs(dest_dir, exist_ok=True)
++
++        source_size = os.path.getsize(source_path)
++        shutil.copy2(source_path, temp_dest)
++
++        dest_size = os.path.getsize(temp_dest)
++        if source_size != dest_size:
++            Path(temp_dest).unlink(missing_ok=True)
++            result_queue.put(
++                {
++                    "ok": False,
++                    "error": (
++                        f"size mismatch after copy: source={source_size}, "
++                        f"dest={dest_size}"
++                    ),
++                }
++            )
++            return
++
++        os.rename(temp_dest, dest_path)
++        result_queue.put({"ok": True, "dest_path": dest_path})
++
++    except Exception as e:
++        cleanup_error = None
++        if temp_dest is not None:
++            try:
++                Path(temp_dest).unlink(missing_ok=True)
++            except Exception as cleanup_e:
++                cleanup_error = cleanup_e
++
++        error = str(e)
++        if cleanup_error is not None:
++            error = f"{error}; failed to clean temp file: {cleanup_error}"
++
++        result_queue.put({"ok": False, "error": error})
+ 
+ 
+ class StorageTierMigrator(threading.Thread):
+     """Migrate aged-out recording segments from hot tier to cold tier(s)."""
+ 
+-    def __init__(self, config: FrigateConfig, stop_event) -> None:
++    def __init__(self, config: "FrigateConfig", stop_event) -> None:
+         super().__init__(name="storage_tier_migrator")
+         self.config = config
+         self.stop_event = stop_event
+         self.daemon = True
++        self._mp_context = multiprocessing.get_context("fork")
++        self._tier_backoff_until: dict[str, float] = {}
++
++    @property
++    def _migration_timeout(self) -> int:
++        return getattr(self.config.storage, "migration_timeout", 120)
++
++    def _run_filesystem_task(
++        self, target, args: tuple, timeout: float, description: str
++    ) -> tuple[bool, dict, bool]:
++        """Run a potentially blocking filesystem task in a helper process."""
++        result_queue = self._mp_context.Queue(maxsize=1)
++        process = self._mp_context.Process(target=target, args=(*args, result_queue))
++        process.start()
++        process.join(timeout)
++
++        if process.is_alive():
++            logger.error(
++                f"{description} exceeded {timeout}s, terminating helper process"
++            )
++            process.terminate()
++            process.join(MIGRATION_PROCESS_SHUTDOWN_TIMEOUT)
++
++            if process.is_alive():
++                process.kill()
++                process.join(MIGRATION_PROCESS_SHUTDOWN_TIMEOUT)
++
++            if process.is_alive():
++                logger.error(
++                    f"{description} helper process did not exit; it may be stuck "
++                    "in kernel I/O until the mount recovers"
++                )
++            else:
++                process.close()
++
++            result_queue.close()
++            return False, {}, True
++
++        try:
++            result = result_queue.get(timeout=MIGRATION_PROCESS_SHUTDOWN_TIMEOUT)
++        except queue.Empty:
++            result = {
++                "ok": False,
++                "error": f"helper exited with code {process.exitcode} without result",
++            }
++
++        process.close()
++        result_queue.close()
++        return bool(result.get("ok")), result, False
++
++    def _backoff_tier(self, path: str, reason: str) -> None:
++        self._tier_backoff_until[path] = time.monotonic() + MIGRATION_TIMEOUT_BACKOFF
++        logger.error(
++            f"Backing off storage tier {path} for {MIGRATION_TIMEOUT_BACKOFF}s: "
++            f"{reason}"
++        )
++
++    def _is_tier_in_backoff(self, path: str) -> bool:
++        return time.monotonic() < self._tier_backoff_until.get(path, 0)
+ 
+     def _is_tier_available(self, path: str) -> bool:
+         """Check if a tier's path is mounted and writable."""
+-        try:
+-            if not os.path.isdir(path):
+-                return False
+-            shutil.disk_usage(path)
+-            return os.access(path, os.W_OK)
+-        except (OSError, PermissionError) as e:
+-            logger.warning(f"Storage tier {path} is unavailable: {e}")
++        if self._is_tier_in_backoff(path):
++            return False
++
++        available, result, timed_out = self._run_filesystem_task(
++            _check_tier_path,
++            (path,),
++            self._migration_timeout,
++            f"Storage tier availability check for {path}",
++        )
++
++        if timed_out:
++            self._backoff_tier(path, "availability check timed out")
+             return False
+ 
++        if not available:
++            logger.warning(
++                f"Storage tier {path} is unavailable: "
++                f"{result.get('error', 'not writable or not mounted')}"
++            )
++
++        return available
++
+     def _migrate_segment(
+         self, recording, source_tier_path: str, dest_tier_path: str
+     ) -> bool:
+@@ -56,41 +219,32 @@ class StorageTierMigrator(threading.Thread):
+             )
+             return False
+ 
+-        relative_path = source_path[len(source_tier_path) :].lstrip("/")
+-        dest_path = os.path.join(dest_tier_path, relative_path)
+-        dest_dir = os.path.dirname(dest_path)
+-        temp_dest = dest_path + ".tmp"
+-
+-        try:
+-            os.makedirs(dest_dir, exist_ok=True)
+-
+-            source_size = os.path.getsize(source_path)
+-            shutil.copy2(source_path, temp_dest)
++        copied, result, timed_out = self._run_filesystem_task(
++            _copy_segment_to_tier,
++            (source_path, source_tier_path, dest_tier_path),
++            self._migration_timeout,
++            f"Tier migration copy for {source_path}",
++        )
+ 
+-            dest_size = os.path.getsize(temp_dest)
+-            if source_size != dest_size:
+-                logger.error(
+-                    f"Size mismatch after copy: source={source_size}, "
+-                    f"dest={dest_size} for {source_path}"
+-                )
+-                Path(temp_dest).unlink(missing_ok=True)
+-                return False
++        if timed_out:
++            self._backoff_tier(dest_tier_path, "migration copy timed out")
++            return False
+ 
+-            os.rename(temp_dest, dest_path)
++        if not copied:
++            logger.error(
++                f"Failed to migrate {source_path}: "
++                f"{result.get('error', 'unknown error')}"
++            )
++            return False
+ 
+-            Recordings.update(path=dest_path).where(
+-                Recordings.id == recording.id
+-            ).execute()
++        dest_path = result["dest_path"]
+ 
+-            Path(source_path).unlink(missing_ok=True)
++        Recordings.update(path=dest_path).where(Recordings.id == recording.id).execute()
+ 
+-            logger.debug(f"Migrated {source_path} -> {dest_path}")
+-            return True
++        Path(source_path).unlink(missing_ok=True)
+ 
+-        except Exception as e:
+-            logger.error(f"Failed to migrate {source_path}: {e}")
+-            Path(temp_dest).unlink(missing_ok=True)
+-            return False
++        logger.debug(f"Migrated {source_path} -> {dest_path}")
++        return True
+ 
+     def _run_migration_cycle(self) -> None:
+         """Run one migration cycle across all tier boundaries."""
+@@ -107,6 +261,13 @@ class StorageTierMigrator(threading.Thread):
+             if source_tier.max_age_hours is None:
+                 continue
+ 
++            if self._is_tier_in_backoff(dest_tier.path):
++                logger.warning(
++                    f"Destination tier {dest_tier.path} is in timeout backoff, "
++                    f"skipping migration cycle for tier {i} -> {i + 1}"
++                )
++                continue
++
+             if not self._is_tier_available(dest_tier.path):
+                 logger.warning(
+                     f"Destination tier {dest_tier.path} unavailable, "
+@@ -142,6 +303,8 @@ class StorageTierMigrator(threading.Thread):
+                     migrated += 1
+                 else:
+                     failed += 1
++                    if self._is_tier_in_backoff(dest_tier.path):
++                        break
+ 
+             if migrated > 0 or failed > 0:
+                 logger.info(
+diff --git a/migrations/033_add_recording_quality.py b/migrations/033_add_recording_quality.py
+index 6b67e52e..fe6b0bfc 100644
+--- a/migrations/033_add_recording_quality.py
++++ b/migrations/033_add_recording_quality.py
+@@ -1,7 +1,7 @@
+ """Peewee migrations -- 033_add_recording_quality.py.
+ 
+ Add quality column to recordings table for dual-stream playback support.
+-Values: "full" (default) or "proxy" (playback stream).
++Values: "full" (default) or "mobile" (playback stream).
+ """
+ 
+ import peewee as pw
+diff --git a/web/src/components/menu/GeneralSettings.tsx b/web/src/components/menu/GeneralSettings.tsx
+index d6022dc4..b0d77158 100644
+--- a/web/src/components/menu/GeneralSettings.tsx
++++ b/web/src/components/menu/GeneralSettings.tsx
+@@ -596,7 +596,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
+                       [
+                         { key: "auto", label: "Auto" },
+                         { key: "full", label: "Full Resolution" },
+-                        { key: "proxy", label: "Mobile Proxy" },
++                        { key: "mobile", label: "Mobile" },
+                       ] as { key: PlaybackQuality; label: string }[]
+                     ).map(({ key, label }) => (
+                       <MenuItem
+diff --git a/web/src/components/player/dynamic/DynamicVideoPlayer.tsx b/web/src/components/player/dynamic/DynamicVideoPlayer.tsx
+index fe4ae669..2f452dd4 100644
+--- a/web/src/components/player/dynamic/DynamicVideoPlayer.tsx
++++ b/web/src/components/player/dynamic/DynamicVideoPlayer.tsx
+@@ -223,16 +223,23 @@ export default function DynamicVideoPlayer({
+     }
+ 
+     const vodPath =
+-      hasPlaybackRole && resolvedQuality === "proxy"
+-        ? "vod-proxy"
++      hasPlaybackRole && resolvedQuality === "mobile"
++        ? "vod-mobile"
+         : "vod";
+     setSource({
+       playlist: `${apiHost}${vodPath}/${camera}/start/${recordingParams.after}/end/${recordingParams.before}/master.m3u8`,
+       startPosition,
+     });
+-
+-    // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [recordings]);
++  }, [
++    apiHost,
++    camera,
++    hasPlaybackRole,
++    recordingParams.after,
++    recordingParams.before,
++    recordings,
++    resolvedQuality,
++    startTimestamp,
++  ]);
+ 
+   useEffect(() => {
+     if (!controller || !recordings?.length) {
+diff --git a/web/src/hooks/use-playback-quality.ts b/web/src/hooks/use-playback-quality.ts
+index b2e1d6be..b859da93 100644
+--- a/web/src/hooks/use-playback-quality.ts
++++ b/web/src/hooks/use-playback-quality.ts
+@@ -1,25 +1,25 @@
+ import { useMemo } from "react";
+ import { useUserPersistence } from "@/hooks/use-user-persistence";
+-import { isMobile } from "react-device-detect";
+ 
+-export type PlaybackQuality = "auto" | "full" | "proxy";
++export type PlaybackQuality = "auto" | "full" | "mobile";
++type StoredPlaybackQuality = PlaybackQuality | "proxy";
+ 
+ export function usePlaybackQuality(): [
+   PlaybackQuality,
+   (q: PlaybackQuality) => void,
+ ] {
+-  const [quality, setQuality] = useUserPersistence<PlaybackQuality>(
++  const [quality, setQuality] = useUserPersistence<StoredPlaybackQuality>(
+     "playback-quality",
+     "auto",
+   );
+-  return [quality ?? "auto", setQuality];
++  return [quality === "proxy" ? "mobile" : (quality ?? "auto"), setQuality];
+ }
+ 
+ export function useResolvedPlaybackQuality(): string {
+   const [quality] = usePlaybackQuality();
+   return useMemo(() => {
+     if (quality === "auto") {
+-      return isMobile ? "proxy" : "full";
++      return "mobile";
+     }
+     return quality;
+   }, [quality]);

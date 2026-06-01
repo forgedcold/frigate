@@ -1,0 +1,3 @@
+frigate/test/test_tier_migrator.py
+test.db-shm
+test.db-wal

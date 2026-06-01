@@ -1,0 +1,21 @@
+## feature/dual-stream-playback...origin/feature/dual-stream-playback
+ M config/config.yml.example
+ M docs/docs/configuration/record.md
+ M frigate/api/media.py
+ M frigate/app.py
+ M frigate/config/storage.py
+ M frigate/models.py
+ M frigate/record/cleanup.py
+ M frigate/record/maintainer.py
+ M frigate/storage.py
+ M frigate/test/http_api/base_http_test.py
+ M frigate/test/test_maintainer.py
+ M frigate/test/test_storage.py
+ M frigate/tier_migrator.py
+ M migrations/033_add_recording_quality.py
+ M web/src/components/menu/GeneralSettings.tsx
+ M web/src/components/player/dynamic/DynamicVideoPlayer.tsx
+ M web/src/hooks/use-playback-quality.ts
+?? frigate/test/test_tier_migrator.py
+?? test.db-shm
+?? test.db-wal
