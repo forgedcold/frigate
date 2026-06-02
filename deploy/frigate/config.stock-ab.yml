@@ -514,7 +514,7 @@ camera_groups:
 
 notifications:
   enabled: false
-  email: '{FRIGATE_NOTIFICATION_EMAIL}'
+  email: ""
 
 auth:
   roles:

@@ -19,13 +19,24 @@ The config should keep credentials as Frigate environment placeholders such as
 `{FRIGATE_GEMINI_API_KEY}`. Do not commit literal camera passwords, MQTT
 passwords, API keys, tokens, or database credentials.
 
+## Normal workflow
+
+Use this loop for config experiments:
+
+1. Edit `deploy/frigate/config.stock-ab.yml`.
+2. Run `deploy/frigate/diff-active-config.sh` to see how it differs from CT240.
+3. Run `deploy/frigate/deploy-config.sh` to back up the active config, deploy, restart, and verify.
+4. If Frigate is healthy, commit and push the config change.
+5. If the test fails, run `deploy/frigate/rollback-config.sh <backup-path>` using the backup path printed by deploy.
+
+For Gemini notification prompt tuning, make small changes and commit them with
+messages like `Tune Duo3 notification prompt`. Avoid changing retention,
+storage, and notification prompts in the same commit.
+
 ## Pull active config into the repo
 
 ```bash
-ssh pve4 "pct pull 240 /opt/frigate/config/config.stock-ab.yml /tmp/config.stock-ab.yml.frigate-repo-sync"
-scp pve4:/tmp/config.stock-ab.yml.frigate-repo-sync /tmp/config.stock-ab.yml.frigate-repo-sync
-cp /tmp/config.stock-ab.yml.frigate-repo-sync deploy/frigate/config.stock-ab.yml
-git diff -- deploy/frigate/config.stock-ab.yml
+deploy/frigate/pull-active-config.sh
 ```
 
 Review the diff for secrets before committing.
@@ -33,13 +44,19 @@ Review the diff for secrets before committing.
 ## Push repo config to CT240
 
 ```bash
-scp deploy/frigate/config.stock-ab.yml pve4:/tmp/config.stock-ab.yml.frigate-repo-sync
-ssh pve4 "pct push 240 /tmp/config.stock-ab.yml.frigate-repo-sync /opt/frigate/config/config.stock-ab.yml"
-ssh pve4 "pct exec 240 -- bash -lc 'docker restart frigate'"
+deploy/frigate/deploy-config.sh
 ```
 
-After restart, verify:
+The deploy script prints the backup path it created on CT240.
+
+## Compare repo config with CT240
 
 ```bash
-ssh pve4 "pct exec 240 -- bash -lc 'curl -sf http://127.0.0.1:5000/api/config >/dev/null && docker ps --filter name=frigate --format \"{{.Names}} {{.Status}}\"'"
+deploy/frigate/diff-active-config.sh
+```
+
+## Roll back a bad config test
+
+```bash
+deploy/frigate/rollback-config.sh /opt/frigate/config/config.stock-ab.yml.bak-YYYYMMDD-HHMMSS
 ```
