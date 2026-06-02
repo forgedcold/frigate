@@ -363,14 +363,8 @@ export default function LiveCameraView({
   }, [camera, fullResolution]);
 
   const constrainedAspectRatio = useMemo<number>(() => {
-    if (isMobile || fullscreen) {
-      return cameraAspectRatio;
-    } else {
-      return containerAspectRatio < cameraAspectRatio
-        ? containerAspectRatio
-        : cameraAspectRatio;
-    }
-  }, [cameraAspectRatio, containerAspectRatio, fullscreen]);
+    return cameraAspectRatio;
+  }, [cameraAspectRatio]);
 
   const growClassName = useMemo(() => {
     if (isMobile) {
@@ -392,7 +386,11 @@ export default function LiveCameraView({
         return "absolute inset-y-2 left-[50%] -translate-x-[50%]";
       }
     } else {
-      return "absolute top-0.5 bottom-0.5 left-[50%] -translate-x-[50%]";
+      if (cameraAspectRatio > containerAspectRatio) {
+        return "absolute inset-x-2 top-[50%] -translate-y-[50%]";
+      } else {
+        return "absolute inset-y-2 left-[50%] -translate-x-[50%]";
+      }
     }
   }, [fullscreen, isPortrait, cameraAspectRatio, containerAspectRatio]);
 
