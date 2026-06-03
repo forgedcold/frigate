@@ -132,14 +132,18 @@ cameras:
     objects:
       genai:
         enabled: true
-        prompt: >-
+        prompt: |-
           Describe only this {label} action for a security notification.
 
           Rules:
+          - Identify if the person is performing yard work (mowing, gardening, sprinklers). If they are, state 'Routine Activity: Yard Work'.
 
           - One sentence only.
 
           - Maximum 12 words.
+
+          - Identify if the person is arriving (moving toward the house) or leaving
+          (moving toward the street).
 
           - Do not describe background, lighting, weather, camera angle, or image
           quality.
@@ -177,6 +181,10 @@ cameras:
           - car
           - person
         inertia: 3
+        filters:
+          person:
+            min_area: 2000
+            threshold: 0.4
       driveway_entrance:
         coordinates: 0.753,0.396,0.826,0.557,0.949,0.475,0.891,0.38
         inertia: 1
@@ -185,16 +193,10 @@ cameras:
           - person
           - car
         friendly_name: Driveway_Entrance
-      yard_security:
-        coordinates: 
-          0.044,0.548,0,0.593,0,1,0.964,0.997,0.954,0.851,0.741,0.374,0.515,0.421,0.423,0.428,0.268,0.429,0.17,0.433
-        inertia: 4
-        loitering_time: 0
-        objects:
-          - person
-          - dog
-          - cat
-        friendly_name: Yard Security
+        filters:
+          person:
+            min_area: 12000
+            threshold: 0.6
       public_watch:
         coordinates: 
           0.914,0.357,0.91,0.365,0.856,0.363,0.82,0.372,0.785,0.369,0.768,0.363,0.63,0.408,0.483,0.422,0.282,0.43,0.158,0.433,0.18,0.371,0.205,0.314,0.226,0.271,0.251,0.244,0.269,0.209,0.295,0.185,0.431,0.147,0.633,0.138,0.708,0.151,0.765,0.166,0.845,0.221,0.897,0.311
@@ -206,6 +208,37 @@ cameras:
           - dog
           - cat
         friendly_name: Public_Watch
+        filters:
+          person:
+            min_area: 2000
+            threshold: 0.4
+      yard_security_left:
+        coordinates: 
+          0.044,0.548,0,0.593,0,1,0.027,1,0.083,0.915,0.173,0.822,0.249,0.672,0.33,0.428,0.268,0.429,0.17,0.433
+        inertia: 4
+        loitering_time: 0
+        objects:
+          - person
+          - dog
+          - cat
+        friendly_name: Yard Security Left
+      yard_security_right:
+        coordinates: 
+          0.383,0.429,0.737,0.376,0.897,0.717,0.773,0.996,0.247,0.996,0.266,0.867,0.319,0.68
+        inertia: 3
+        loitering_time: 0
+        objects:
+          - cat
+          - dog
+          - person
+        friendly_name: Yard Security Right
+      yard_security_path:
+        coordinates: 
+          0.332,0.433,0.256,0.67,0.175,0.833,0.034,0.994,0.243,0.994,0.264,0.852,0.311,0.7,0.377,0.433
+        inertia: 3
+        loitering_time: 0
+        objects: person
+        friendly_name: Yard Security Path
     motion:
       threshold: 18
       contour_area: 8
@@ -221,7 +254,7 @@ cameras:
           - cat
         required_zones:
           - driveway_entrance
-          - yard_security
+          - yard_security_left
       detections:
         required_zones: public_watch
       genai:
@@ -286,12 +319,18 @@ cameras:
     objects:
       genai:
         enabled: true
-        prompt: "Describe only this {label} action for a security notification.\n\
-          Rules:\n- One sentence only.\n- Maximum 12 words.\n- Do not describe background,
-          lighting, weather, camera angle, or image quality.\n- Do not describe appearance,
-          age, gender, clothing, or body type.\n- Do not speculate about identity
-          or intent.\n- Use Routine motion for unimportant passing movement.\n- Use
-          Unclear activity if the action is not clear."
+        prompt: |-
+          Describe only this {label} action for a security notification.
+
+          Rules:
+          - Identify if the person is performing yard work (mowing, gardening, sprinklers). If they are, state 'Routine Activity: Yard Work'.
+          - One sentence only.
+          - Maximum 12 words.
+          - Do not describe background, lighting, weather, camera angle, or image quality.
+          - Do not describe appearance, age, gender, clothing, or body type.
+          - Do not speculate about identity or intent.
+          - Use Routine motion for unimportant passing movement.
+          - Use Unclear activity if the action is not clear.
       track: [person, dog, cat]
       filters:
         person:
@@ -345,12 +384,18 @@ cameras:
     objects:
       genai:
         enabled: true
-        prompt: "Describe only this {label} action for a security notification.\n\
-          Rules:\n- One sentence only.\n- Maximum 12 words.\n- Do not describe background,
-          lighting, weather, camera angle, or image quality.\n- Do not describe appearance,
-          age, gender, clothing, or body type.\n- Do not speculate about identity
-          or intent.\n- Use Routine motion for unimportant passing movement.\n- Use
-          Unclear activity if the action is not clear."
+        prompt: |-
+          Describe only this {label} action for a security notification.
+
+          Rules:
+          - Identify if the person is performing yard work (mowing, gardening, sprinklers). If they are, state 'Routine Activity: Yard Work'.
+          - One sentence only.
+          - Maximum 12 words.
+          - Do not describe background, lighting, weather, camera angle, or image quality.
+          - Do not describe appearance, age, gender, clothing, or body type.
+          - Do not speculate about identity or intent.
+          - Use Routine motion for unimportant passing movement.
+          - Use Unclear activity if the action is not clear.
       track: [person, dog]
       filters:
         person: {min_area: 1200, max_area: 120000, threshold: 0.6}
@@ -399,12 +444,31 @@ cameras:
     objects:
       genai:
         enabled: true
-        prompt: "Describe only this {label} action for a security notification.\n\
-          Rules:\n- One sentence only.\n- Maximum 12 words.\n- Do not describe background,
-          lighting, weather, camera angle, or image quality.\n- Do not describe appearance,
-          age, gender, clothing, or body type.\n- Do not speculate about identity
-          or intent.\n- Use Routine motion for unimportant passing movement.\n- Use
-          Unclear activity if the action is not clear."
+        prompt: |-
+          Describe only this {label} action for a security notification.
+
+          Rules:
+          - Identify if the person is performing yard work (mowing, gardening, sprinklers). If they are, state 'Routine Activity: Yard Work'.
+
+          - One sentence only.
+
+          - Maximum 12 words.
+
+          - Identify if the person is arriving (moving toward the house) or leaving
+          (moving toward the street).
+
+          - Identify if they are carrying a package.
+
+          - Do not describe background, lighting, weather, camera angle, or image
+          quality.
+
+          - Do not describe appearance, age, gender, clothing, or body type.
+
+          - Do not speculate about identity or intent.
+
+          - Use Routine motion for unimportant passing movement.
+
+          - Use Unclear activity if the action is not clear.
       track: [person, dog, cat]
       filters:
         person: {min_area: 12000, max_area: 2300000, threshold: 0.6}
@@ -414,7 +478,7 @@ cameras:
       threshold: 24
       contour_area: 60
       mask:
-        - 0,0,1,0,1,0.327,0,0.326
+        - 0,0,1,0,1,0.5,0,0.5
         - 0,0.18,0.09,0.18,0.105,0.751,0,0.9
         - 0.813,0.188,1,0.2,1,0.92,0.711,1,0.836,0.719,0.86,0.41
     zones:
@@ -422,15 +486,21 @@ cameras:
         coordinates: 0.209,0.742,0.768,0.834,0.708,1,0.009,0.991,0.104,0.762
         objects: [person, dog]
         inertia: 4
-      approach_path:
+      path_inner:
         coordinates: 
-          0.622,0.529,0.832,0.537,0.776,0.835,0.565,0.801,0.276,0.752,0.499,0.583
+          0.616,0.572,0.84,0.594,0.776,0.835,0.565,0.801,0.117,0.723,0.512,0.565
+        objects: person
+        inertia: 3
+        loitering_time: 0
+      path_outer:
+        coordinates: 
+          0.644,0.519,0.849,0.523,0.838,0.59,0.695,0.578,0.509,0.562,0.639,0.513
         objects: person
         inertia: 3
         loitering_time: 0
     review:
       alerts:
-        required_zones: [porch_close, approach_path]
+        required_zones: [porch_close, path_inner, path_outer]
       genai:
         enabled: true
         alerts: true
@@ -514,7 +584,7 @@ camera_groups:
 
 notifications:
   enabled: false
-  email: ""
+  email: stuff@bigr.net
 
 auth:
   roles:

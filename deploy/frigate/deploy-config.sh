@@ -12,6 +12,20 @@ if [[ ! -f "${REPO_CONFIG}" ]]; then
   exit 1
 fi
 
+python3 - <<PY
+import pathlib
+import sys
+import yaml
+
+config_path = pathlib.Path("${REPO_CONFIG}")
+try:
+    with config_path.open() as f:
+        yaml.safe_load(f)
+except Exception as exc:
+    print(f"Invalid YAML in {config_path}: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+
 mapfile -t placeholders < <(grep -o "{FRIGATE_[A-Z0-9_]*}" "${REPO_CONFIG}" | tr -d "{}" | sort -u)
 if (( ${#placeholders[@]} > 0 )); then
   missing=()
