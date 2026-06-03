@@ -174,17 +174,6 @@ cameras:
           min_area: 30000
           max_area: 1000000
     zones:
-      neighbor_arrival:
-        coordinates: 0.305,0.159,0.33,0.094,0.653,0.05,0.664,0.133
-        loitering_time: 0
-        objects:
-          - car
-          - person
-        inertia: 3
-        filters:
-          person:
-            min_area: 2000
-            threshold: 0.4
       driveway_entrance:
         coordinates: 0.753,0.396,0.826,0.557,0.949,0.475,0.891,0.38
         inertia: 1
@@ -239,6 +228,13 @@ cameras:
         loitering_time: 0
         objects: person
         friendly_name: Yard Security Path
+      neighbor_driveway:
+        coordinates: 0.305,0.159,0.33,0.094,0.653,0.05,0.664,0.133
+        inertia: 3
+        loitering_time: 0
+        objects:
+          - car
+          - person
     motion:
       threshold: 18
       contour_area: 8

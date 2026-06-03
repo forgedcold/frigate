@@ -865,6 +865,22 @@ async def vod_ts(
     force_discontinuity: bool = False,
     quality: str = "full",
 ):
+    if camera_name == "duo3_front" and quality == "full":
+        has_mobile_recordings = (
+            Recordings.select(Recordings.id)
+            .where(
+                Recordings.start_time.between(start_ts, end_ts)
+                | Recordings.end_time.between(start_ts, end_ts)
+                | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
+            )
+            .where(Recordings.camera == camera_name)
+            .where(Recordings.quality == "mobile")
+            .exists()
+        )
+
+        if has_mobile_recordings:
+            quality = "mobile"
+
     logger.debug(
         "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s quality=%s",
         camera_name,
