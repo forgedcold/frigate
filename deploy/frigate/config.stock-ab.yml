@@ -483,14 +483,12 @@ cameras:
         objects: [person, dog]
         inertia: 4
       path_inner:
-        coordinates: 
-          0.616,0.572,0.84,0.594,0.776,0.835,0.565,0.801,0.117,0.723,0.512,0.565
+        coordinates: 0.622,0.529,0.832,0.537,0.776,0.835,0.565,0.801,0.276,0.752,0.499,0.583
         objects: person
         inertia: 3
         loitering_time: 0
       path_outer:
-        coordinates: 
-          0.644,0.519,0.849,0.523,0.838,0.59,0.695,0.578,0.509,0.562,0.639,0.513
+        coordinates: 0.584,0.37,0.854,0.348,0.781,0.52,0.622,0.529,0.499,0.583,0.343,0.368
         objects: person
         inertia: 3
         loitering_time: 0

@@ -49,7 +49,7 @@ scp "${REPO_CONFIG}" "pve4:${REMOTE_TMP}" >/dev/null
 ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; cp ${ACTIVE_CONFIG} ${BACKUP_CONFIG}'"
 ssh pve4 "pct push 240 ${REMOTE_TMP} ${ACTIVE_CONFIG}" >/dev/null
 ssh pve4 "pct exec 240 -- bash -lc 'docker restart frigate >/dev/null'"
-ssh pve4 "pct exec 240 -- bash -lc 'for i in \$(seq 1 30); do curl -sf http://127.0.0.1:5000/api/config >/dev/null && docker ps --filter name=frigate --format \"{{.Names}} {{.Status}}\" && exit 0; sleep 2; done; docker logs --tail 80 frigate; exit 1'"
+ssh pve4 "pct exec 240 -- bash -lc 'for i in \$(seq 1 30); do health=\$(docker inspect frigate --format \"{{.State.Health.Status}}\" 2>/dev/null || true); if [[ \"\$health\" == healthy ]] && curl -sf http://127.0.0.1:5000/api/config >/dev/null; then docker ps --filter name=frigate --format \"{{.Names}} {{.Status}}\"; exit 0; fi; sleep 2; done; docker logs --tail 80 frigate; exit 1'"
 
 echo
 echo "Deployed ${REPO_CONFIG}"

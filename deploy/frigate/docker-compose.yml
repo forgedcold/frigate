@@ -1,0 +1,45 @@
+services:
+  frigate:
+    container_name: frigate
+    image: frigate-tiered:v0.17.1-ab1
+    restart: unless-stopped
+    network_mode: host
+    shm_size: '4gb'
+    devices:
+      - /dev/dri:/dev/dri
+    tmpfs:
+      - /tmp/cache:size=4g
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /opt/frigate/config:/config
+      - /media/frigate:/media/frigate
+      - /mnt/local/recordings:/mnt/local/recordings
+      - /opt/frigate/config/notification.py.patched:/opt/frigate/frigate/api/notification.py
+      - /opt/frigate/custom-build/frigate/api/media.py:/opt/frigate/frigate/api/media.py
+    env_file:
+      - /opt/frigate/.env
+    environment:
+      - TZ=America/Denver
+      - OMP_NUM_THREADS=8
+      - CONFIG_FILE=/config/config.stock-ab.yml
+    group_add:
+      - '993'
+      - '44'
+
+  frigate-tier-migrator:
+    container_name: frigate-tier-migrator
+    image: frigate-tiered:v0.17.1-ab1
+    restart: unless-stopped
+    network_mode: host
+    entrypoint: python3
+    command: -m frigate.tier_migrator
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /opt/frigate/config:/config
+      - /media/frigate:/media/frigate
+      - /mnt/local/recordings:/mnt/local/recordings
+    env_file:
+      - /opt/frigate/.env
+    environment:
+      - TZ=America/Denver
+      - CONFIG_FILE=/config/config.stock-ab.yml

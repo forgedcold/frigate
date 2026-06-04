@@ -49,6 +49,27 @@ deploy/frigate/deploy-config.sh
 
 The deploy script prints the backup path it created on CT240.
 
+## Push selected code files to CT240
+
+```bash
+deploy/frigate/deploy-code.sh
+```
+
+This deploys repo-managed runtime patches to CT240, updates
+`/opt/frigate/docker-compose.yml`, recreates the `frigate` container, waits for
+health, and verifies Duo3 VOD is using the mobile playback stream. The script
+backs up changed CT240 files under `/opt/frigate/deploy-backups/YYYYMMDD-HHMMSS`.
+
+Use this for small Python runtime fixes such as `frigate/api/media.py`. For
+larger Frigate source changes, reconcile CT240 first and prefer a full image
+build/deploy plan.
+
+Roll back a code deployment:
+
+```bash
+deploy/frigate/rollback-code.sh /opt/frigate/deploy-backups/YYYYMMDD-HHMMSS
+```
+
 ## Compare repo config with CT240
 
 ```bash
