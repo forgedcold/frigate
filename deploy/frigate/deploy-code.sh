@@ -5,11 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 HOST_TMP="/tmp/frigate-code-deploy-$$"
 REMOTE_ROOT="/opt/frigate/custom-build/frigate"
+REMOTE_MIGRATIONS="/opt/frigate/custom-build/migrations"
 REMOTE_COMPOSE="/opt/frigate/docker-compose.yml"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 
 declare -a FILES=(
   "frigate/api/media.py"
+  "frigate/tier_migrator.py"
+  "migrations/034_add_recordings_tier_migration_index.py"
 )
 
 if [[ ! -f "${COMPOSE_FILE}" ]]; then
@@ -49,14 +52,22 @@ ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; cp ${REMOTE_COMPOSE} /opt
 
 for rel in "${FILES[@]}"; do
   tmp_name="${rel//\//__}"
-  remote_dest="${REMOTE_ROOT}/${rel#frigate/}"
+  if [[ "${rel}" == frigate/* ]]; then
+    remote_dest="${REMOTE_ROOT}/${rel#frigate/}"
+  elif [[ "${rel}" == migrations/* ]]; then
+    remote_dest="${REMOTE_MIGRATIONS}/${rel#migrations/}"
+  else
+    echo "Unsupported deploy file path: ${rel}" >&2
+    exit 1
+  fi
   ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; mkdir -p \"$(dirname "${remote_dest}")\"; if [[ -f \"${remote_dest}\" ]]; then cp \"${remote_dest}\" \"/opt/frigate/deploy-backups/${timestamp}/${tmp_name}\"; fi'"
   ssh pve4 "pct push 240 ${HOST_TMP}/files/${tmp_name} ${remote_dest}" >/dev/null
 done
 
 ssh pve4 "pct push 240 ${HOST_TMP}/docker-compose.yml ${REMOTE_COMPOSE}" >/dev/null
-ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; cd /opt/frigate; if docker compose version >/dev/null 2>&1; then docker compose config -q && docker compose up -d --force-recreate frigate; else docker-compose config -q && docker-compose up -d --force-recreate frigate; fi'"
+ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; cd /opt/frigate; if docker compose version >/dev/null 2>&1; then docker compose config -q && docker compose up -d --force-recreate frigate frigate-tier-migrator; else docker-compose config -q && docker-compose up -d --force-recreate frigate frigate-tier-migrator; fi'"
 ssh pve4 "pct exec 240 -- bash -lc 'for i in \$(seq 1 30); do health=\$(docker inspect frigate --format \"{{.State.Health.Status}}\" 2>/dev/null || true); if [[ \"\$health\" == healthy ]] && curl -sf http://127.0.0.1:5000/api/config >/dev/null; then docker ps --filter name=frigate --format \"{{.Names}} {{.Status}}\"; exit 0; fi; sleep 2; done; docker logs --tail 80 frigate; exit 1'"
+ssh pve4 "pct exec 240 -- bash -lc 'for i in \$(seq 1 40); do health=\$(docker inspect frigate-tier-migrator --format \"{{.State.Health.Status}}\" 2>/dev/null || true); if [[ \"\$health\" == healthy ]]; then docker ps --filter name=frigate-tier-migrator --format \"{{.Names}} {{.Status}}\"; exit 0; fi; sleep 3; done; docker logs --tail 120 frigate-tier-migrator; exit 1'"
 
 ssh pve4 "pct exec 240 -- bash -lc 'now=\$(date +%s); start=\$((now-240)); end=\$((now-120)); curl -sf \"http://127.0.0.1:5000/vod/duo3_front/start/\$start/end/\$end/master.m3u8\" | tee /tmp/duo3-vod-check.m3u8; grep -q \"RESOLUTION=1536x432\" /tmp/duo3-vod-check.m3u8'"
 ssh pve4 "rm -rf ${HOST_TMP}"

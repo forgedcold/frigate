@@ -16,6 +16,7 @@ services:
       - /mnt/local/recordings:/mnt/local/recordings
       - /opt/frigate/config/notification.py.patched:/opt/frigate/frigate/api/notification.py
       - /opt/frigate/custom-build/frigate/api/media.py:/opt/frigate/frigate/api/media.py
+      - /opt/frigate/custom-build/migrations/034_add_recordings_tier_migration_index.py:/opt/frigate/migrations/034_add_recordings_tier_migration_index.py
     env_file:
       - /opt/frigate/.env
     environment:
@@ -38,8 +39,20 @@ services:
       - /opt/frigate/config:/config
       - /media/frigate:/media/frigate
       - /mnt/local/recordings:/mnt/local/recordings
+      - /opt/frigate/custom-build/frigate/tier_migrator.py:/opt/frigate/frigate/tier_migrator.py
     env_file:
       - /opt/frigate/.env
     environment:
       - TZ=America/Denver
       - CONFIG_FILE=/config/config.stock-ab.yml
+      - FRIGATE_TIER_STATUS_FILE=/config/tier_migrator_status.json
+      - FRIGATE_TIER_HEALTH_MAX_AGE_SECONDS=1800
+      - FRIGATE_HOT_TIER_MIN_FREE_GB=80
+      - FRIGATE_HOT_TIER_TARGET_FREE_GB=120
+      - FRIGATE_HOT_TIER_MAX_USAGE_PERCENT=75
+    healthcheck:
+      test: ["CMD", "python3", "-m", "frigate.tier_migrator", "--healthcheck"]
+      start_period: 120s
+      interval: 60s
+      timeout: 10s
+      retries: 3

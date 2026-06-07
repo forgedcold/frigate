@@ -56,13 +56,21 @@ deploy/frigate/deploy-code.sh
 ```
 
 This deploys repo-managed runtime patches to CT240, updates
-`/opt/frigate/docker-compose.yml`, recreates the `frigate` container, waits for
-health, and verifies Duo3 VOD is using the mobile playback stream. The script
-backs up changed CT240 files under `/opt/frigate/deploy-backups/YYYYMMDD-HHMMSS`.
+`/opt/frigate/docker-compose.yml`, recreates the `frigate` and
+`frigate-tier-migrator` containers, waits for both health checks, and verifies
+Duo3 VOD is using the mobile playback stream. The script backs up changed CT240
+files under `/opt/frigate/deploy-backups/YYYYMMDD-HHMMSS`.
 
-Use this for small Python runtime fixes such as `frigate/api/media.py`. For
-larger Frigate source changes, reconcile CT240 first and prefer a full image
-build/deploy plan.
+Use this for small Python runtime fixes that are listed in `deploy-code.sh`,
+currently `frigate/api/media.py`, `frigate/tier_migrator.py`, and the tiering
+index migration. For larger Frigate source changes, reconcile CT240 first and
+prefer a full image build/deploy plan.
+
+The tier migrator writes health/status to:
+
+```text
+/opt/frigate/config/tier_migrator_status.json
+```
 
 Roll back a code deployment:
 
