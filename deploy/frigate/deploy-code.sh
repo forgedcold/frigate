@@ -69,6 +69,7 @@ BRANCH='${deployed_branch}'
 DEPLOYED_SHA='${deployed_sha}'
 DEPLOYED_AT='${timestamp}'
 EOF
+scp "${HOST_TMP}/deploy-state.env" "pve4:${HOST_TMP}/deploy-state.env" >/dev/null
 
 ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; mkdir -p /opt/frigate/deploy-backups/${timestamp}'"
 ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; cp ${REMOTE_COMPOSE} /opt/frigate/deploy-backups/${timestamp}/docker-compose.yml'"
