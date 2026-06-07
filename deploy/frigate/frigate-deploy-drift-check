@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_FILE="${FRIGATE_DEPLOY_STATE_FILE:-/opt/frigate/deploy-state.env}"
+STATUS_FILE="${FRIGATE_DEPLOY_DRIFT_STATUS_FILE:-/opt/frigate/config/deploy_drift_status.json}"
+DEFAULT_REPO_URL="git@github.com:forgedcold/frigate.git"
+DEFAULT_BRANCH="custom/v0.17.1-tiered-storage"
+
+write_status() {
+  local state="$1"
+  local message="$2"
+  local remote_sha="${3:-}"
+  local deployed_sha="${4:-}"
+  local repo_url="${5:-}"
+  local branch="${6:-}"
+  local tmp
+  tmp="$(mktemp "${STATUS_FILE}.tmp.XXXXXX")"
+  python3 - "$tmp" <<PY
+import json
+import time
+from pathlib import Path
+
+payload = {
+    "state": ${state@Q},
+    "message": ${message@Q},
+    "time": time.time(),
+    "repo_url": ${repo_url@Q},
+    "branch": ${branch@Q},
+    "remote_sha": ${remote_sha@Q},
+    "deployed_sha": ${deployed_sha@Q},
+}
+Path("$tmp").write_text(json.dumps(payload, sort_keys=True))
+PY
+  mv "$tmp" "$STATUS_FILE"
+}
+
+if [[ -f "$STATE_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$STATE_FILE"
+fi
+
+repo_url="${REPO_URL:-$DEFAULT_REPO_URL}"
+branch="${BRANCH:-$DEFAULT_BRANCH}"
+deployed_sha="${DEPLOYED_SHA:-unknown}"
+
+if [[ "$deployed_sha" == unknown || -z "$deployed_sha" ]]; then
+  write_status "unknown" "No deployed SHA has been recorded yet" "" "$deployed_sha" "$repo_url" "$branch"
+  logger -t frigate-deploy-drift "No deployed SHA recorded in $STATE_FILE"
+  exit 0
+fi
+
+remote_sha="$(
+  runuser -u roger -- git ls-remote "$repo_url" "$branch" 2>/tmp/frigate-deploy-drift.err \
+    | awk '{print $1}' \
+    | head -n 1
+)"
+
+if [[ -z "$remote_sha" ]]; then
+  error="$(cat /tmp/frigate-deploy-drift.err 2>/dev/null || true)"
+  write_status "error" "Unable to query remote: $error" "" "$deployed_sha" "$repo_url" "$branch"
+  logger -t frigate-deploy-drift "Unable to query $repo_url $branch: $error"
+  exit 0
+fi
+
+if [[ "$remote_sha" == "$deployed_sha" ]]; then
+  write_status "current" "CT240 matches the tracked GitHub branch" "$remote_sha" "$deployed_sha" "$repo_url" "$branch"
+  exit 0
+fi
+
+write_status "behind" "CT240 deployed code differs from the tracked GitHub branch" "$remote_sha" "$deployed_sha" "$repo_url" "$branch"
+logger -t frigate-deploy-drift "CT240 behind repo branch=$branch deployed=$deployed_sha remote=$remote_sha"

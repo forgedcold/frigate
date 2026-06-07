@@ -72,6 +72,22 @@ The tier migrator writes health/status to:
 /opt/frigate/config/tier_migrator_status.json
 ```
 
+Successful code deploys also install and update a deployment drift detector.
+CT240 records the deployed repo revision in:
+
+```text
+/opt/frigate/deploy-state.env
+```
+
+The systemd timer `frigate-deploy-drift-check.timer` checks the tracked GitHub
+branch every 15 minutes and writes status to:
+
+```text
+/opt/frigate/config/deploy_drift_status.json
+```
+
+This detector reports drift only. It does not pull or apply code automatically.
+
 Roll back a code deployment:
 
 ```bash

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Frigate deployment drift detector every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Unit=frigate-deploy-drift-check.service
+
+[Install]
+WantedBy=timers.target
