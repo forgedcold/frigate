@@ -191,7 +191,7 @@ cameras:
             min_area: 12000
             threshold: 0.6
       public_watch:
-        coordinates: 
+        coordinates:
           0.914,0.357,0.91,0.365,0.856,0.363,0.82,0.372,0.785,0.369,0.768,0.363,0.63,0.408,0.483,0.422,0.282,0.43,0.158,0.433,0.18,0.371,0.205,0.314,0.226,0.271,0.251,0.244,0.269,0.209,0.295,0.185,0.431,0.147,0.633,0.138,0.708,0.151,0.765,0.166,0.845,0.221,0.897,0.311
         inertia: 3
         loitering_time: 0
@@ -205,7 +205,7 @@ cameras:
             min_area: 2000
             threshold: 0.4
       yard_security_left:
-        coordinates: 
+        coordinates:
           0.044,0.548,0,0.593,0,1,0.027,1,0.083,0.915,0.173,0.822,0.249,0.672,0.33,0.428,0.268,0.429,0.17,0.433
         inertia: 4
         loitering_time: 0
@@ -215,7 +215,7 @@ cameras:
           - cat
         friendly_name: Yard Security Left
       yard_security_right:
-        coordinates: 
+        coordinates:
           0.383,0.429,0.737,0.376,0.897,0.717,0.773,0.996,0.247,0.996,0.266,0.867,0.319,0.68
         inertia: 3
         loitering_time: 0
@@ -225,7 +225,7 @@ cameras:
           - person
         friendly_name: Yard Security Right
       yard_security_path:
-        coordinates: 
+        coordinates:
           0.332,0.433,0.256,0.67,0.175,0.833,0.034,0.994,0.243,0.994,0.264,0.852,0.311,0.7,0.377,0.433
         inertia: 3
         loitering_time: 0
@@ -238,17 +238,19 @@ cameras:
         objects:
           - car
           - person
-      front_curb:
-        coordinates: 0.165,0.424,0.222,0.369,0.475,0.347,0.696,0.336,0.709,0.406,0.491,0.431,0.278,0.456
-        loitering_time: 0
-        objects: car
-        friendly_name: Front Curb
       work_truck_route:
         coordinates:
           0.447,0.232,0.645,0.646,0.971,0.901,0.993,0.747,0.714,0.311,0.677,0.21
         loitering_time: 0
         objects: person
         friendly_name: Work Truck Route
+      front_curb_left:
+        coordinates:
+          0.216,0.379,0.223,0.264,0.315,0.235,0.355,0.247,0.351,0.375,0.258,0.38
+        inertia: 3
+        loitering_time: 0
+        objects: car
+        friendly_name: Front Curb Left
     motion:
       threshold: 18
       contour_area: 8
@@ -264,19 +266,19 @@ cameras:
           - cat
         required_zones:
           - driveway_entrance
-          - front_curb
           - neighbor_driveway
           - yard_security_left
           - yard_security_path
           - yard_security_right
+          - front_curb_left
       detections:
         required_zones:
           - driveway_entrance
-          - front_curb
           - neighbor_driveway
           - yard_security_left
           - yard_security_path
           - yard_security_right
+          - front_curb_left
       genai:
         enabled: true
         alerts: true
@@ -351,53 +353,20 @@ cameras:
           - Do not speculate about identity or intent.
           - Use Routine motion for unimportant passing movement.
           - Use Unclear activity if the action is not clear.
-      track: [person, dog, cat]
+      track: [dog, cat]
       filters:
         person:
           mask: 0.303,0.191,0.304,0.268,0.424,0.271,0.423,0.196
 
     zones:
       wall-movement:
-        coordinates: 
+        coordinates:
           0.684,0.113,0.409,0.1,0.24,0.136,0.079,0.197,0.092,0.092,0.209,0.047,0.379,0.018,0.612,0.02,0.72,0.03
         loitering_time: 0
         objects:
-          - person
           - cat
     review:
-      alerts:
-        required_zones:
-          - wall-movement
-      detections:
-        required_zones:
-          - wall-movement
-      genai:
-        enabled: true
-        alerts: true
-        detections: false
-        image_source: preview
-        additional_concerns:
-          - person repeatedly returns to the same private area overnight
-          - person lingers near vehicles, doors, gates, windows, or porch
-          - person carries away an object or handles a package
-        activity_context_prompt: "### Normal Activity Indicators (Level 0)\n- Known
-          or verified people at any time.\n- Brief routine residential movement with
-          a clear normal purpose.\n- Deliveries, package drop-offs, guests, pets,
-          or service work during normal hours.\n- People, vehicles, or animals passing
-          through public areas without entering private zones.\n- Repeated detections
-          caused by the same routine movement, shadows, headlights, or camera artifacts.\n\
-          \n### Needs Review Indicators (Level 1)\n- Unidentified person in private
-          areas between 11 PM and 6 AM.\n- Person lingering near vehicles, doors,
-          gates, windows, or the porch without a clear normal purpose.\n- Repeated
-          returns to the same private area during the overnight period.\n- Person
-          carrying away an object, handling packages, checking access points, or looking
-          into vehicles/windows.\n- Activity that is unclear but occurs in a private
-          zone overnight.\n\n### Critical Threat Indicators (Level 2)\n- Forced entry,
-          active theft, property damage, visible weapons, aggression, or break-in
-          tools.\n\n### Reporting Preference\n- Be concise and factual.\n- Group repeated
-          activity when possible.\n- Do not describe static background details.\n\
-          - Do not describe appearance unless it is directly relevant to a security
-          concern.\n- Do not speculate about identity or intent."
+      genai: {}
   hallway:
     ffmpeg:
       inputs:
@@ -422,7 +391,7 @@ cameras:
           - Do not speculate about identity or intent.
           - Use Routine motion for unimportant passing movement.
           - Use Unclear activity if the action is not clear.
-      track: [person, dog]
+      track: [dog]
       filters:
         person: {min_area: 1200, max_area: 120000, threshold: 0.6}
         dog: {min_area: 600, max_area: 80000, threshold: 0.35}
@@ -436,7 +405,6 @@ cameras:
         coordinates: 0.406,0.628,0.675,0.642,1,0.838,1,1,0.244,1,0.234,0.787
         objects:
           - dog
-          - person
         inertia: 3
         loitering_time: 0
     motion:
@@ -446,12 +414,6 @@ cameras:
       enabled: false
 
     review:
-      alerts:
-        required_zones:
-          - hallway_master_end
-      detections:
-        required_zones:
-          - hallway_master_end
       genai: {}
   frontdoor:
     ffmpeg:
@@ -519,12 +481,14 @@ cameras:
         objects: [person, dog]
         inertia: 4
       path_inner:
-        coordinates: 0.622,0.529,0.832,0.537,0.776,0.835,0.565,0.801,0.276,0.752,0.499,0.583
+        coordinates:
+          0.622,0.529,0.832,0.537,0.776,0.835,0.565,0.801,0.276,0.752,0.499,0.583
         objects: person
         inertia: 3
         loitering_time: 0
       path_outer:
-        coordinates: 0.584,0.37,0.854,0.348,0.781,0.52,0.622,0.529,0.499,0.583,0.343,0.368
+        coordinates:
+          0.584,0.37,0.854,0.348,0.781,0.52,0.622,0.529,0.499,0.583,0.343,0.368
         objects: person
         inertia: 3
         loitering_time: 0
