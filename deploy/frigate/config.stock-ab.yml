@@ -250,9 +250,19 @@ cameras:
           - cat
         required_zones:
           - driveway_entrance
+          - front_curb
+          - neighbor_driveway
           - yard_security_left
+          - yard_security_path
+          - yard_security_right
       detections:
-        required_zones: public_watch
+        required_zones:
+          - driveway_entrance
+          - front_curb
+          - neighbor_driveway
+          - yard_security_left
+          - yard_security_path
+          - yard_security_right
       genai:
         enabled: true
         alerts: true
