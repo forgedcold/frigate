@@ -173,6 +173,10 @@ cameras:
           threshold: 0.55
           min_area: 30000
           max_area: 1000000
+          mask:
+            # Ignore middle-road traffic while preserving the near curb,
+            # driveway entrance, and neighbor driveway vehicle zones.
+            - 0.137,0.168,0.915,0.168,0.915,0.342,0.700,0.326,0.485,0.339,0.285,0.360,0.160,0.397,0.158,0.313
     zones:
       driveway_entrance:
         coordinates: 0.753,0.396,0.826,0.557,0.949,0.475,0.891,0.38
@@ -193,7 +197,6 @@ cameras:
         loitering_time: 0
         objects:
           - person
-          - car
           - dog
           - cat
         friendly_name: Public_Watch
@@ -236,7 +239,7 @@ cameras:
           - car
           - person
       front_curb:
-        coordinates: 0.206,0.386,0.227,0.266,0.686,0.208,0.692,0.33
+        coordinates: 0.165,0.424,0.222,0.369,0.475,0.347,0.696,0.336,0.709,0.406,0.491,0.431,0.278,0.456
         loitering_time: 0
         objects: car
         friendly_name: Front Curb
@@ -362,6 +365,12 @@ cameras:
           - person
           - cat
     review:
+      alerts:
+        required_zones:
+          - wall-movement
+      detections:
+        required_zones:
+          - wall-movement
       genai:
         enabled: true
         alerts: true
@@ -437,6 +446,12 @@ cameras:
       enabled: false
 
     review:
+      alerts:
+        required_zones:
+          - hallway_master_end
+      detections:
+        required_zones:
+          - hallway_master_end
       genai: {}
   frontdoor:
     ffmpeg:
@@ -515,6 +530,8 @@ cameras:
         loitering_time: 0
     review:
       alerts:
+        required_zones: [porch_close, path_inner, path_outer]
+      detections:
         required_zones: [porch_close, path_inner, path_outer]
       genai:
         enabled: true
