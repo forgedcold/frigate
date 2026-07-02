@@ -62,6 +62,10 @@ go2rtc:
       - rtsp://{FRIGATE_REOLINK_USER}:{FRIGATE_REOLINK_PASS}@192.168.1.243:554/h264Preview_01_sub#rtsp_transport=tcp
     tapo_hallway_main:
       - rtsp://rogitor:{FRIGATE_REOLINK_PASS}@192.168.1.241:554/stream1#rtsp_transport=tcp#recv_buffer_size=1048576#send_buffer_size=1048576
+    tapo_hallway_sub:
+      - rtsp://rogitor:{FRIGATE_REOLINK_PASS}@192.168.1.241:554/stream2#rtsp_transport=tcp#recv_buffer_size=1048576#send_buffer_size=1048576
+    shed:
+      - rtsp://{FRIGATE_SHED_USER}:{FRIGATE_SHED_PASS}@192.168.1.155:10554/tcp/av0_0#rtsp_transport=tcp
 
 detect:
   enabled: true
@@ -69,8 +73,6 @@ detect:
   stationary:
     interval: 50
     threshold: 50
-    max_frames:
-      default: 36000
 
 snapshots:
   enabled: true
@@ -126,9 +128,10 @@ cameras:
       width: 4096
       height: 1152
       fps: 6
-      max_disappeared: 120
+      max_disappeared: 1800
       stationary:
-        threshold: 120
+        threshold: 30
+        interval: 600
     objects:
       genai:
         enabled: true
@@ -163,7 +166,7 @@ cameras:
           threshold: 0.6
           min_area: 12000
           max_area: 220000
-          mask: 
+          mask:
             0.252,0.441,0.196,0.461,0.17,0.562,0.188,0.641,0.248,0.646,0.294,0.484
         dog:
           threshold: 0.22
@@ -177,6 +180,9 @@ cameras:
             # Ignore middle-road traffic while preserving the near curb,
             # driveway entrance, and neighbor driveway vehicle zones.
             - 0.137,0.168,0.915,0.168,0.915,0.342,0.700,0.326,0.485,0.339,0.285,0.360,0.160,0.397,0.158,0.313
+            # Ignore the parked pickup's resting bottom-center area. Moving
+            # vehicles still cross driveway_entrance above this mask first.
+            - 0.780,0.560,0.930,0.560,0.930,0.780,0.780,0.780
     zones:
       driveway_entrance:
         coordinates: 0.753,0.396,0.826,0.557,0.949,0.475,0.891,0.38
@@ -372,7 +378,10 @@ cameras:
       inputs:
         - path: rtsp://127.0.0.1:8554/tapo_hallway_main
           input_args: preset-rtsp-restream
-          roles: [detect, record]
+          roles: [record]
+        - path: rtsp://127.0.0.1:8554/tapo_hallway_sub
+          input_args: preset-rtsp-restream
+          roles: [detect]
     live:
       streams:
         High Res (H264): tapo_hallway_main
@@ -397,15 +406,15 @@ cameras:
         dog: {min_area: 600, max_area: 80000, threshold: 0.35}
     detect:
       enabled: true
-      width: 2560
-      height: 1440
-      fps: 10
+      width: 640
+      height: 360
+      fps: 5
     zones:
       hallway_master_end:
         coordinates: 0.406,0.628,0.675,0.642,1,0.838,1,1,0.244,1,0.234,0.787
         objects:
           - dog
-        inertia: 3
+        inertia: 1
         loitering_time: 0
     motion:
       threshold: 20
@@ -452,6 +461,8 @@ cameras:
           (moving toward the street).
 
           - Identify if they are carrying a package.
+
+          - If a delivery company logo or uniform is visible, name it (FedEx/UPS/USPS/Amazon).
 
           - Do not describe background, lighting, weather, camera angle, or image
           quality.
@@ -527,6 +538,43 @@ cameras:
     notifications:
       enabled: true
 
+  shed:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/shed
+          input_args: preset-rtsp-restream
+          roles: [detect, record]
+    live:
+      streams:
+        Shed: shed
+    detect:
+      enabled: true
+      fps: 5
+    objects:
+      track:
+        - person
+        - dog
+        - cat
+        - bird
+      filters:
+        person: {min_area: 300, threshold: 0.50}
+        dog: {min_area: 150, threshold: 0.30}
+        cat: {min_area: 100, threshold: 0.30}
+        bird: {min_area: 50, threshold: 0.25}
+    review:
+      alerts:
+        labels:
+          - person
+          - dog
+          - cat
+          - bird
+      detections:
+        labels:
+          - person
+          - dog
+          - cat
+          - bird
+
 birdseye:
   enabled: true
   mode: motion
@@ -552,9 +600,9 @@ classification:
   bird:
     enabled: true
   custom:
-    Pool-cover:
+    pool_cover:
       enabled: true
-      name: Pool-cover
+      name: pool_cover
       threshold: 0.8
       state_config:
         cameras:
@@ -566,6 +614,19 @@ classification:
               - 0.8346860160065459
         motion: true
 
+    gate:
+      enabled: true
+      name: gate
+      threshold: 0.8
+      state_config:
+        cameras:
+          shed:
+            crop:
+              - 0.2814633679705396
+              - 0.1683068245545032
+              - 0.6023694474470518
+              - 0.7388065214016357
+        motion: true
 version: 0.17-0
 
 camera_groups:
