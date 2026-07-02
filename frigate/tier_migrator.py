@@ -102,6 +102,10 @@ def _copy_segment_to_tier(
         source_size = os.path.getsize(source_path)
         shutil.copy2(source_path, temp_dest)
 
+        # Force NFS close-to-open attribute revalidation before checking size.
+        with open(temp_dest, "rb"):
+            pass
+
         dest_size = os.path.getsize(temp_dest)
         if source_size != dest_size:
             Path(temp_dest).unlink(missing_ok=True)
