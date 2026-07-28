@@ -400,7 +400,7 @@ cameras:
           - Do not speculate about identity or intent.
           - Use Routine motion for unimportant passing movement.
           - Use Unclear activity if the action is not clear.
-      track: [dog]
+      track: [dog, cat]
       filters:
         person: {min_area: 1200, max_area: 120000, threshold: 0.6}
         dog: {min_area: 600, max_area: 80000, threshold: 0.35}
@@ -411,9 +411,9 @@ cameras:
       fps: 5
     zones:
       hallway_master_end:
-        coordinates: 0.406,0.628,0.675,0.642,1,0.838,1,1,0.244,1,0.234,0.787
-        objects:
-          - dog
+        coordinates:
+          0.537,0.512,0.598,0.605,0.8,0.557,1,0.818,1,1,0.168,1,0.228,0.786,0.289,0.515
+        objects: dog
         inertia: 1
         loitering_time: 0
     motion:
