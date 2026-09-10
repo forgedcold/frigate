@@ -89,16 +89,16 @@ motion:
 record:
   enabled: true
   continuous:
-    days: 14
+    days: 30
   alerts:
     pre_capture: 10
     post_capture: 15
     retain:
-      days: 14
+      days: 30
       mode: all
   detections:
     retain:
-      days: 14
+      days: 30
       mode: all
 
 review:
@@ -166,7 +166,7 @@ cameras:
           threshold: 0.6
           min_area: 12000
           max_area: 220000
-          mask:
+          mask: 
             0.252,0.441,0.196,0.461,0.17,0.562,0.188,0.641,0.248,0.646,0.294,0.484
         dog:
           threshold: 0.22
@@ -197,7 +197,7 @@ cameras:
             min_area: 12000
             threshold: 0.6
       public_watch:
-        coordinates:
+        coordinates: 
           0.914,0.357,0.91,0.365,0.856,0.363,0.82,0.372,0.785,0.369,0.768,0.363,0.63,0.408,0.483,0.422,0.282,0.43,0.158,0.433,0.18,0.371,0.205,0.314,0.226,0.271,0.251,0.244,0.269,0.209,0.295,0.185,0.431,0.147,0.633,0.138,0.708,0.151,0.765,0.166,0.845,0.221,0.897,0.311
         inertia: 3
         loitering_time: 0
@@ -211,7 +211,7 @@ cameras:
             min_area: 2000
             threshold: 0.4
       yard_security_left:
-        coordinates:
+        coordinates: 
           0.044,0.548,0,0.593,0,1,0.027,1,0.083,0.915,0.173,0.822,0.249,0.672,0.33,0.428,0.268,0.429,0.17,0.433
         inertia: 4
         loitering_time: 0
@@ -221,7 +221,7 @@ cameras:
           - cat
         friendly_name: Yard Security Left
       yard_security_right:
-        coordinates:
+        coordinates: 
           0.383,0.429,0.737,0.376,0.897,0.717,0.773,0.996,0.247,0.996,0.266,0.867,0.319,0.68
         inertia: 3
         loitering_time: 0
@@ -231,7 +231,7 @@ cameras:
           - person
         friendly_name: Yard Security Right
       yard_security_path:
-        coordinates:
+        coordinates: 
           0.332,0.433,0.256,0.67,0.175,0.833,0.034,0.994,0.243,0.994,0.264,0.852,0.311,0.7,0.377,0.433
         inertia: 3
         loitering_time: 0
@@ -245,18 +245,25 @@ cameras:
           - car
           - person
       work_truck_route:
-        coordinates:
+        coordinates: 
           0.447,0.232,0.645,0.646,0.971,0.901,0.993,0.747,0.714,0.311,0.677,0.21
         loitering_time: 0
         objects: person
         friendly_name: Work Truck Route
       front_curb_left:
-        coordinates:
+        coordinates: 
           0.216,0.379,0.223,0.264,0.315,0.235,0.355,0.247,0.351,0.375,0.258,0.38
         inertia: 3
         loitering_time: 0
         objects: car
         friendly_name: Front Curb Left
+      tuellers_driveway:
+        coordinates: 0.234,0.126,0.179,0.181,0.198,0.246,0.267,0.163
+        loitering_time: 0
+        objects:
+          - car
+          - person
+        inertia: 3
     motion:
       threshold: 18
       contour_area: 8
@@ -366,7 +373,7 @@ cameras:
 
     zones:
       wall-movement:
-        coordinates:
+        coordinates: 
           0.684,0.113,0.409,0.1,0.24,0.136,0.079,0.197,0.092,0.092,0.209,0.047,0.379,0.018,0.612,0.02,0.72,0.03
         loitering_time: 0
         objects:
@@ -411,7 +418,7 @@ cameras:
       fps: 5
     zones:
       hallway_master_end:
-        coordinates:
+        coordinates: 
           0.537,0.512,0.598,0.605,0.8,0.557,1,0.818,1,1,0.168,1,0.228,0.786,0.289,0.515
         objects: dog
         inertia: 1
@@ -492,13 +499,13 @@ cameras:
         objects: [person, dog]
         inertia: 4
       path_inner:
-        coordinates:
+        coordinates: 
           0.622,0.529,0.832,0.537,0.776,0.835,0.565,0.801,0.276,0.752,0.499,0.583
         objects: person
         inertia: 3
         loitering_time: 0
       path_outer:
-        coordinates:
+        coordinates: 
           0.584,0.37,0.854,0.348,0.781,0.52,0.622,0.529,0.499,0.583,0.343,0.368
         objects: person
         inertia: 3
