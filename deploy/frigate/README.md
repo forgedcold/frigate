@@ -1,3 +1,10 @@
+# MOVED — this fork is retired
+
+As of 2026-09-10 the canonical repository is **git@github.com:wr45/frigate.git**
+(branch `master`). Nothing here is deployed or maintained. Do not build from it.
+
+---
+
 # Frigate deployment config
 
 This directory tracks the CT240 Frigate deployment config.
