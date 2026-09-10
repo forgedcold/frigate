@@ -2,7 +2,14 @@ services:
   frigate:
     container_name: frigate
     image: frigate-tiered:v0.17.2-ab1
+    entrypoint: ["python3", "/usr/local/bin/frigate-storage-preflight", "/init"]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "/usr/local/bin/frigate-storage-preflight", "true"]
+      start_period: 120s
+      interval: 60s
+      timeout: 10s
+      retries: 3
     network_mode: host
     shm_size: '4gb'
     devices:
@@ -12,8 +19,9 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /opt/frigate/config:/config
-      - /media/frigate:/media/frigate
+      - /media/frigate:/media/frigate:rslave
       - /mnt/local/recordings:/mnt/local/recordings
+      - /opt/frigate/storage-preflight.py:/usr/local/bin/frigate-storage-preflight:ro
       - /opt/frigate/config/notification.py.patched:/opt/frigate/frigate/api/notification.py
       - /opt/frigate/custom-build/frigate/api/media.py:/opt/frigate/frigate/api/media.py
       - /opt/frigate/custom-build/migrations/034_add_recordings_tier_migration_index.py:/opt/frigate/migrations/034_add_recordings_tier_migration_index.py
@@ -23,6 +31,13 @@ services:
       - TZ=America/Denver
       - OMP_NUM_THREADS=8
       - CONFIG_FILE=/config/config.stock-ab.yml
+      - FRIGATE_ARCHIVE_TIER_ROOT=/media/frigate
+      - FRIGATE_ARCHIVE_TIER_REQUIRED_FSTYPE=nfs4
+      - FRIGATE_ARCHIVE_TIER_REQUIRED_SOURCE=10.10.10.3:/tank/frigate_archive
+      - FRIGATE_ARCHIVE_TIER_MIN_TOTAL_GB=1000
+      - FRIGATE_ARCHIVE_TIER_MIN_FREE_GB=100
+      - FRIGATE_HOT_TIER_ROOT=/mnt/local/recordings
+      - FRIGATE_HOT_TIER_MIN_TOTAL_GB=200
     group_add:
       - '993'
       - '44'
@@ -32,19 +47,25 @@ services:
     image: frigate-tiered:v0.17.2-ab1
     restart: unless-stopped
     network_mode: host
-    entrypoint: python3
+    entrypoint: ["python3", "/usr/local/bin/frigate-storage-preflight", "python3"]
     command: -m frigate.tier_migrator
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /opt/frigate/config:/config
-      - /media/frigate:/media/frigate
+      - /media/frigate:/media/frigate:rslave
       - /mnt/local/recordings:/mnt/local/recordings
+      - /opt/frigate/storage-preflight.py:/usr/local/bin/frigate-storage-preflight:ro
       - /opt/frigate/custom-build/frigate/tier_migrator.py:/opt/frigate/frigate/tier_migrator.py
     env_file:
       - /opt/frigate/.env
     environment:
       - TZ=America/Denver
       - CONFIG_FILE=/config/config.stock-ab.yml
+      - FRIGATE_ARCHIVE_TIER_ROOT=/media/frigate
+      - FRIGATE_ARCHIVE_TIER_REQUIRED_FSTYPE=nfs4
+      - FRIGATE_ARCHIVE_TIER_REQUIRED_SOURCE=10.10.10.3:/tank/frigate_archive
+      - FRIGATE_ARCHIVE_TIER_MIN_TOTAL_GB=1000
+      - FRIGATE_ARCHIVE_TIER_MIN_FREE_GB=100
       - FRIGATE_TIER_STATUS_FILE=/config/tier_migrator_status.json
       - FRIGATE_TIER_HEALTH_MAX_AGE_SECONDS=1800
       - FRIGATE_HOT_TIER_MIN_FREE_GB=80

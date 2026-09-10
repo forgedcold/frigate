@@ -7,8 +7,10 @@ HOST_TMP="/tmp/frigate-code-deploy-$$"
 REMOTE_ROOT="/opt/frigate/custom-build/frigate"
 REMOTE_MIGRATIONS="/opt/frigate/custom-build/migrations"
 REMOTE_COMPOSE="/opt/frigate/docker-compose.yml"
+REMOTE_PREFLIGHT="/opt/frigate/storage-preflight.py"
 REMOTE_DEPLOY_STATE="/opt/frigate/deploy-state.env"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
+PREFLIGHT_SCRIPT="${SCRIPT_DIR}/storage-preflight.py"
 DETECTOR_SCRIPT="${SCRIPT_DIR}/frigate-deploy-drift-check"
 DETECTOR_SERVICE="${SCRIPT_DIR}/frigate-deploy-drift-check.service"
 DETECTOR_TIMER="${SCRIPT_DIR}/frigate-deploy-drift-check.timer"
@@ -24,7 +26,7 @@ if [[ ! -f "${COMPOSE_FILE}" ]]; then
   exit 1
 fi
 
-for required in "${DETECTOR_SCRIPT}" "${DETECTOR_SERVICE}" "${DETECTOR_TIMER}"; do
+for required in "${PREFLIGHT_SCRIPT}" "${DETECTOR_SCRIPT}" "${DETECTOR_SERVICE}" "${DETECTOR_TIMER}"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing deploy drift detector file: ${required}" >&2
     exit 1
@@ -50,6 +52,7 @@ done
 ssh pve4 "mkdir -p ${HOST_TMP}/files"
 mkdir -p "${HOST_TMP}"
 scp "${COMPOSE_FILE}" "pve4:${HOST_TMP}/docker-compose.yml" >/dev/null
+scp "${PREFLIGHT_SCRIPT}" "pve4:${HOST_TMP}/storage-preflight.py" >/dev/null
 scp "${DETECTOR_SCRIPT}" "pve4:${HOST_TMP}/frigate-deploy-drift-check" >/dev/null
 scp "${DETECTOR_SERVICE}" "pve4:${HOST_TMP}/frigate-deploy-drift-check.service" >/dev/null
 scp "${DETECTOR_TIMER}" "pve4:${HOST_TMP}/frigate-deploy-drift-check.timer" >/dev/null
@@ -73,6 +76,7 @@ scp "${HOST_TMP}/deploy-state.env" "pve4:${HOST_TMP}/deploy-state.env" >/dev/nul
 
 ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; mkdir -p /opt/frigate/deploy-backups/${timestamp}'"
 ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; cp ${REMOTE_COMPOSE} /opt/frigate/deploy-backups/${timestamp}/docker-compose.yml'"
+ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; if [[ -f ${REMOTE_PREFLIGHT} ]]; then cp ${REMOTE_PREFLIGHT} /opt/frigate/deploy-backups/${timestamp}/storage-preflight.py; fi'"
 
 for rel in "${FILES[@]}"; do
   tmp_name="${rel//\//__}"
@@ -89,6 +93,8 @@ for rel in "${FILES[@]}"; do
 done
 
 ssh pve4 "pct push 240 ${HOST_TMP}/docker-compose.yml ${REMOTE_COMPOSE}" >/dev/null
+ssh pve4 "pct push 240 ${HOST_TMP}/storage-preflight.py ${REMOTE_PREFLIGHT}" >/dev/null
+ssh pve4 "pct exec 240 -- bash -lc 'chmod 0755 ${REMOTE_PREFLIGHT}'"
 ssh pve4 "pct push 240 ${HOST_TMP}/frigate-deploy-drift-check /usr/local/sbin/frigate-deploy-drift-check" >/dev/null
 ssh pve4 "pct push 240 ${HOST_TMP}/frigate-deploy-drift-check.service /etc/systemd/system/frigate-deploy-drift-check.service" >/dev/null
 ssh pve4 "pct push 240 ${HOST_TMP}/frigate-deploy-drift-check.timer /etc/systemd/system/frigate-deploy-drift-check.timer" >/dev/null

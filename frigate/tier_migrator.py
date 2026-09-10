@@ -35,6 +35,11 @@ DEFAULT_HEALTH_MAX_AGE_SECONDS = 1800
 DEFAULT_MIN_FREE_GB = 80
 DEFAULT_TARGET_FREE_GB = 120
 DEFAULT_MAX_USAGE_PERCENT = 75
+DEFAULT_ARCHIVE_TIER_ROOT = "/media/frigate"
+DEFAULT_ARCHIVE_TIER_REQUIRED_FSTYPE = "nfs4"
+DEFAULT_ARCHIVE_TIER_REQUIRED_SOURCE = "10.10.10.3:/tank/frigate_archive"
+DEFAULT_ARCHIVE_TIER_MIN_TOTAL_GB = 1000
+DEFAULT_ARCHIVE_TIER_MIN_FREE_GB = 100
 
 
 def _env_int(name: str, default: int) -> int:
@@ -52,6 +57,102 @@ def _atomic_write_json(path: str, data: dict) -> None:
     os.replace(temp_path, path)
 
 
+def _mount_for_path(path: str) -> tuple[str, str] | None:
+    path = os.path.abspath(path)
+    best: tuple[str, str, str] | None = None
+
+    with open("/proc/self/mountinfo") as f:
+        for line in f:
+            before, _, after = line.partition(" - ")
+            pre_fields = before.split()
+            post_fields = after.split()
+
+            if len(pre_fields) < 5 or len(post_fields) < 2:
+                continue
+
+            mount_point = pre_fields[4].replace("\\040", " ")
+            normalized_mount_point = mount_point.rstrip("/") or "/"
+            if path == normalized_mount_point or path.startswith(
+                f"{normalized_mount_point}/"
+            ):
+                if best is None or len(normalized_mount_point) > len(best[0]):
+                    best = (normalized_mount_point, post_fields[0], post_fields[1])
+
+    if best is None:
+        return None
+
+    return best[1], best[2].replace("\\040", " ")
+
+
+def _archive_tier_error(path: str) -> str | None:
+    archive_root = os.environ.get(
+        "FRIGATE_ARCHIVE_TIER_ROOT", DEFAULT_ARCHIVE_TIER_ROOT
+    )
+
+    if not (
+        path == archive_root
+        or path.startswith(f"{archive_root.rstrip('/')}/")
+        or archive_root.startswith(f"{path.rstrip('/')}/")
+    ):
+        return None
+
+    mount = _mount_for_path(archive_root)
+    if mount is None:
+        return f"archive tier root {archive_root} has no mount entry"
+
+    fstype, source = mount
+    required_fstype = os.environ.get(
+        "FRIGATE_ARCHIVE_TIER_REQUIRED_FSTYPE",
+        DEFAULT_ARCHIVE_TIER_REQUIRED_FSTYPE,
+    )
+    if required_fstype and fstype != required_fstype:
+        return (
+            f"archive tier root {archive_root} is {fstype} from {source}, "
+            f"expected fstype {required_fstype}"
+        )
+
+    required_source = os.environ.get(
+        "FRIGATE_ARCHIVE_TIER_REQUIRED_SOURCE",
+        DEFAULT_ARCHIVE_TIER_REQUIRED_SOURCE,
+    )
+    if required_source and required_source not in source:
+        return (
+            f"archive tier root {archive_root} is from {source}, "
+            f"expected source containing {required_source}"
+        )
+
+    try:
+        usage = shutil.disk_usage(archive_root)
+    except Exception as e:
+        return f"archive tier root {archive_root} usage check failed: {e}"
+
+    min_total_gb = _env_int(
+        "FRIGATE_ARCHIVE_TIER_MIN_TOTAL_GB",
+        DEFAULT_ARCHIVE_TIER_MIN_TOTAL_GB,
+    )
+    min_free_gb = _env_int(
+        "FRIGATE_ARCHIVE_TIER_MIN_FREE_GB",
+        DEFAULT_ARCHIVE_TIER_MIN_FREE_GB,
+    )
+
+    total_gb = usage.total // 1024**3
+    free_gb = usage.free // 1024**3
+
+    if min_total_gb and total_gb < min_total_gb:
+        return (
+            f"archive tier root {archive_root} total is {total_gb}GB, "
+            f"expected at least {min_total_gb}GB"
+        )
+
+    if min_free_gb and free_gb < min_free_gb:
+        return (
+            f"archive tier root {archive_root} free is {free_gb}GB, "
+            f"expected at least {min_free_gb}GB"
+        )
+
+    return None
+
+
 def dest_path_for_tier(
     source_path: str, source_tier_path: str, dest_tier_path: str
 ) -> str:
@@ -61,6 +162,11 @@ def dest_path_for_tier(
 
 def _check_tier_path(path: str, result_queue) -> None:
     try:
+        archive_error = _archive_tier_error(path)
+        if archive_error:
+            result_queue.put({"ok": False, "error": archive_error})
+            return
+
         result_queue.put(
             {
                 "ok": os.path.isdir(path)
@@ -92,6 +198,11 @@ def _copy_segment_to_tier(
                     ),
                 }
             )
+            return
+
+        archive_error = _archive_tier_error(dest_tier_path)
+        if archive_error:
+            result_queue.put({"ok": False, "error": archive_error})
             return
 
         dest_path = dest_path_for_tier(source_path, source_tier_path, dest_tier_path)
