@@ -20,3 +20,5 @@ core
 !/web/**/*.ts
 .idea/*
 .ipynb_checkpoints
+# Claude Code per-user permissions
+.claude/settings.local.json

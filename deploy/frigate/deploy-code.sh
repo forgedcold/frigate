@@ -67,7 +67,7 @@ timestamp="$(date +%Y%m%d-%H%M%S)"
 deployed_sha="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
 deployed_branch="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD)"
 cat >"${HOST_TMP}/deploy-state.env" <<EOF
-REPO_URL='git@github.com:forgedcold/frigate.git'
+REPO_URL='git@github.com:wr45/frigate.git'
 BRANCH='${deployed_branch}'
 DEPLOYED_SHA='${deployed_sha}'
 DEPLOYED_AT='${timestamp}'

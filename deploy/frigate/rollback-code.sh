@@ -16,7 +16,7 @@ ssh pve4 "pct exec 240 -- bash -lc 'set -euo pipefail; test -d \"${BACKUP_DIR}\"
 ssh pve4 "pct exec 240 -- bash -lc 'for i in \$(seq 1 30); do health=\$(docker inspect frigate --format \"{{.State.Health.Status}}\" 2>/dev/null || true); if [[ \"\$health\" == healthy ]] && curl -sf http://127.0.0.1:5000/api/config >/dev/null; then docker ps --filter name=frigate --format \"{{.Names}} {{.Status}}\"; exit 0; fi; sleep 2; done; docker logs --tail 80 frigate; exit 1'"
 ssh pve4 "pct exec 240 -- bash -lc 'for i in \$(seq 1 40); do health=\$(docker inspect frigate-tier-migrator --format \"{{.State.Health.Status}}\" 2>/dev/null || true); if [[ \"\$health\" == healthy ]]; then docker ps --filter name=frigate-tier-migrator --format \"{{.Names}} {{.Status}}\"; exit 0; fi; sleep 3; done; docker logs --tail 120 frigate-tier-migrator; exit 1'"
 ssh pve4 "pct exec 240 -- bash -lc 'cat >/opt/frigate/deploy-state.env <<EOF
-REPO_URL='git@github.com:forgedcold/frigate.git'
+REPO_URL='git@github.com:wr45/frigate.git'
 BRANCH='custom/v0.17.1-tiered-storage'
 DEPLOYED_SHA='rollback-unknown'
 DEPLOYED_AT='rollback'

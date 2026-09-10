@@ -3,7 +3,7 @@ set -euo pipefail
 
 STATE_FILE="${FRIGATE_DEPLOY_STATE_FILE:-/opt/frigate/deploy-state.env}"
 STATUS_FILE="${FRIGATE_DEPLOY_DRIFT_STATUS_FILE:-/opt/frigate/config/deploy_drift_status.json}"
-DEFAULT_REPO_URL="git@github.com:forgedcold/frigate.git"
+DEFAULT_REPO_URL="git@github.com:wr45/frigate.git"
 DEFAULT_BRANCH="custom/v0.17.1-tiered-storage"
 
 write_status() {
